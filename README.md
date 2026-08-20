@@ -21,7 +21,7 @@
 
 > 本项目桌宠形象采用【DeepSeek 娘】，侵权则删。提供自定义桌宠形象功能，见后（自定义动画资源需要自行生成）。
 
-![桌宠部分功能演示](readme-assets/show_high.gif)
+![桌宠部分功能演示](https://blog-iskage.oss-cn-hangzhou.aliyuncs.com/images/show_high.gif)
 
 
 ---
