@@ -8,21 +8,19 @@ const path = require('path');
 const fs = require('fs');
 const {
   getLLMConfig, setLLMConfig,
+  getBalanceConfig, setBalanceConfig,
   getAnimationConfig, setAnimationConfig,
   getPetConfig, setPetConfig,
-  getChatHistory, addChatMessage, clearChatHistory,
-  getAllConfig,
-  getConversations, createConversation, deleteConversation,
-  renameConversation, getActiveConversationId, setActiveConversationId,
-  getActiveConversation
+  getBubbleConfig, setBubbleConfig,
+  getAllConfig
 } = require('../shared/store');
-const { chatCompletion } = require('../shared/llm-client');
-const { createChatWindow } = require('./chat-window');
+const { fetchBalance, formatBalanceText } = require('../shared/deepseek-api');
 const { createSettingsWindow } = require('./settings-window');
 const {
-  togglePetWindow, setPetScale, setPetOpacity,
-  getPetWindow
+  togglePetWindow, setPetSize, setPetOpacity,
+  getPetWindow, notifyGeometryChange
 } = require('./pet-window');
+const { showBubble, hideBubble, applyBubbleSize, createBubbleWindow } = require('./bubble-window');
 
 /**
  * 向桌宠窗口发送消息（安全检查）
@@ -38,79 +36,49 @@ function sendToPet(channel, data) {
  * 注册所有 IPC 处理器
  */
 function registerIpcHandlers() {
-  // ====== LLM 相关 ======
+  // ====== API 配置（仅用于余额查询） ======
 
   ipcMain.handle('get-llm-config', () => getLLMConfig());
 
   ipcMain.handle('set-llm-config', (event, config) => {
-    setLLMConfig(config);
+    if (config && typeof config === 'object') {
+      const next = {};
+      for (const key of ['apiEndpoint', 'balanceEndpoint', 'apiKey']) {
+        if (typeof config[key] === 'string') next[key] = config[key].trim();
+      }
+      setLLMConfig(next);
+      // 通知桌宠：API 配置变化后刷新一次余额
+      sendToPet('balance-config-changed', getBalanceConfig());
+    }
     return { success: true };
   });
 
-  ipcMain.handle('chat-send', async (event, payload) => {
+  // ====== API 余额 ======
+
+  ipcMain.handle('get-api-balance', async () => {
     try {
-      const { messages, config } = (payload && typeof payload === 'object' && !Array.isArray(payload))
-        ? payload : { messages: payload, config: null };
-      const llmConfig = config || getLLMConfig();
-      const response = await chatCompletion(llmConfig, messages);
-      return { success: true, content: response };
+      const result = await fetchBalance(getLLMConfig());
+      return { success: true, data: result, text: formatBalanceText(result) };
     } catch (e) {
       return { success: false, error: e.message };
     }
   });
 
-  ipcMain.on('chat-send-stream', async (event, payload) => {
-    const { messages, config, requestId } = payload || {};
-    const llmConfig = (config && config.apiEndpoint) ? config : getLLMConfig();
-    try {
-      await chatCompletion(llmConfig, messages, (chunk) => {
-        if (event.sender && !event.sender.isDestroyed()) {
-          event.sender.send('chat-stream-chunk', { requestId, chunk });
-        }
-      });
-      if (event.sender && !event.sender.isDestroyed()) {
-        event.sender.send('chat-stream-done', { requestId });
+  ipcMain.handle('get-balance-config', () => getBalanceConfig());
+
+  ipcMain.handle('set-balance-config', (event, config) => {
+    if (config && typeof config === 'object') {
+      const next = {};
+      if (config.enabled !== undefined) next.enabled = !!config.enabled;
+      if (config.intervalMinutes !== undefined) {
+        const minutes = Number(config.intervalMinutes);
+        // 0 表示只在点击时展示；其余限制在 1 ~ 1440 分钟之间
+        next.intervalMinutes = Number.isFinite(minutes) ? Math.min(1440, Math.max(0, minutes)) : 30;
       }
-    } catch (e) {
-      if (event.sender && !event.sender.isDestroyed()) {
-        event.sender.send('chat-stream-error', { requestId, error: e.message });
-      }
+      setBalanceConfig(next);
+      sendToPet('balance-config-changed', getBalanceConfig());
     }
-  });
-
-  // ====== 对话历史 ======
-
-  ipcMain.handle('get-chat-history', () => getChatHistory());
-  ipcMain.handle('add-chat-message', (event, message) => addChatMessage(message));
-  ipcMain.handle('clear-chat-history', () => { clearChatHistory(); return { success: true }; });
-
-  // ====== 多对话管理 ======
-
-  ipcMain.handle('get-conversations', () => getConversations());
-
-  ipcMain.handle('create-conversation', (event, title) => {
-    return createConversation(title);
-  });
-
-  ipcMain.handle('delete-conversation', (event, id) => {
-    deleteConversation(id);
     return { success: true };
-  });
-
-  ipcMain.handle('rename-conversation', (event, { id, title }) => {
-    renameConversation(id, title);
-    return { success: true };
-  });
-
-  ipcMain.handle('switch-conversation', (event, id) => {
-    setActiveConversationId(id);
-    const conv = getActiveConversation();
-    return conv ? conv.messages : [];
-  });
-
-  ipcMain.handle('get-active-conversation', () => {
-    const conv = getActiveConversation();
-    return conv || null;
   });
 
   // ====== 动画配置 ======
@@ -121,7 +89,7 @@ function registerIpcHandlers() {
   ipcMain.handle('set-animation-config', (event, config) => {
     setAnimationConfig(config);
     // 通知桌宠窗口重载动画
-    sendToPet('reload-animations', config);
+    sendToPet('reload-animations', getAnimationConfig());
     return { success: true };
   });
 
@@ -134,19 +102,66 @@ function registerIpcHandlers() {
   ipcMain.handle('set-pet-config', (event, config) => {
     if (config && typeof config === 'object') {
       setPetConfig(config);
-      if (config.scale !== undefined) setPetScale(Number(config.scale));
+      const pet = getPetConfig();
+      // 宠物大小 / 窗口裁剪都会改变窗口尺寸
+      if (config.scale !== undefined || config.crop !== undefined) {
+        setPetSize(pet.scale, pet.crop);
+      }
       if (config.opacity !== undefined) setPetOpacity(Number(config.opacity));
-      // 通知桌宠配置变更
-      sendToPet('config-changed', config);
+      // 通知桌宠配置变更（含裁剪参数）
+      sendToPet('config-changed', pet);
     }
     return { success: true };
   });
+
+  // ====== 气泡（独立悬浮窗口） ======
+
+  ipcMain.handle('get-bubble-config', () => getBubbleConfig());
+
+  ipcMain.handle('set-bubble-config', (event, config) => {
+    if (config && typeof config === 'object') {
+      const next = {};
+      if (config.scale !== undefined) {
+        const scale = Number(config.scale);
+        next.scale = Number.isFinite(scale) ? Math.min(2, Math.max(0.5, scale)) : 1;
+      }
+      if (config.offsetX !== undefined) {
+        const x = Number(config.offsetX);
+        next.offsetX = Number.isFinite(x) ? Math.min(600, Math.max(-600, Math.round(x))) : 0;
+      }
+      if (config.offsetY !== undefined) {
+        const y = Number(config.offsetY);
+        next.offsetY = Number.isFinite(y) ? Math.min(600, Math.max(-600, Math.round(y))) : 0;
+      }
+      setBubbleConfig(next);
+      // 位置变化时立刻把气泡挪过去（如果正在显示）
+      notifyGeometryChange();
+    }
+    return { success: true };
+  });
+
+  // 桌宠渲染进程请求显示气泡
+  ipcMain.handle('pet-show-bubble', (event, payload) => showBubble(payload || {}));
+
+  // 预览气泡（设置页使用）
+  ipcMain.handle('preview-bubble', () => showBubble({
+    kind: 'balance',
+    data: {
+      isAvailable: true,
+      balances: [{ currency: 'CNY', totalBalance: '128.00', grantedBalance: '8.00', toppedUpBalance: '120.00' }]
+    },
+    duration: 4000
+  }));
+
+  // 气泡渲染进程回报内容尺寸
+  ipcMain.on('bubble-size', (event, size) => applyBubbleSize(size));
+  // 气泡展示结束
+  ipcMain.on('bubble-hide', () => hideBubble());
 
   ipcMain.handle('get-all-config', () => getAllConfig());
 
   // ====== 窗口操作 ======
 
-  ipcMain.handle('open-chat-window', () => { createChatWindow(); return { success: true }; });
   ipcMain.handle('open-settings-window', () => { createSettingsWindow(); return { success: true }; });
   ipcMain.handle('hide-pet', () => { togglePetWindow(); return { success: true }; });
 
@@ -167,21 +182,6 @@ function registerIpcHandlers() {
   ipcMain.handle('quit-app', () => { app.quit(); return { success: true }; });
 
   // 窗口控制
-  ipcMain.handle('minimize-chat-window', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) win.minimize();
-  });
-  ipcMain.handle('maximize-chat-window', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) {
-      if (win.isMaximized()) win.unmaximize();
-      else win.maximize();
-    }
-  });
-  ipcMain.handle('close-chat-window', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) win.close();
-  });
   ipcMain.handle('close-settings-window', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.close();
@@ -189,7 +189,9 @@ function registerIpcHandlers() {
 
   // 打开外部链接
   ipcMain.handle('open-external', (event, url) => {
-    shell.openExternal(url);
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+    }
     return { success: true };
   });
 
@@ -211,13 +213,89 @@ function registerIpcHandlers() {
     projectRoot: path.join(__dirname, '..', '..')
   }));
 
-  ipcMain.handle('test-api-connection', async (event, config) => {
-    try {
-      const result = await chatCompletion(config, [{ role: 'user', content: '你好，请简短回复' }]);
-      return { success: true, content: result };
-    } catch (e) {
-      return { success: false, error: e.message };
+  // ====== 文件拖拽 → 回收站 ======
+
+  // 拖拽诊断日志：桌宠渲染进程不打开 DevTools 时也能在终端看到拖拽事件
+  ipcMain.on('dnd-debug', (event, payload) => {
+    const stage = payload && payload.stage;
+    const detail = payload && payload.detail;
+    console.log(`[DnD] ${stage || '?'}${detail ? ' → ' + detail : ''}`);
+  });
+
+  ipcMain.handle('trash-items', async (event, rawPaths) => {
+    const list = Array.isArray(rawPaths) ? rawPaths : [];
+    const paths = [];
+    for (const item of list) {
+      if (typeof item !== 'string' || !item.trim()) continue;
+      const resolved = path.resolve(item.trim());
+      if (!paths.includes(resolved)) paths.push(resolved);
     }
+
+    console.log('[DnD] trash-items 收到:', paths.length ? paths.join(' | ') : '(空)');
+
+    if (paths.length === 0) {
+      return { success: false, canceled: false, trashed: [], errors: ['没有获取到有效的文件路径'] };
+    }
+
+    const existing = [];
+    for (const p of paths) {
+      try {
+        if (fs.existsSync(p)) existing.push(p);
+      } catch (e) { /* 忽略无法访问的路径 */ }
+    }
+
+    if (existing.length === 0) {
+      return { success: false, canceled: false, trashed: [], errors: ['文件不存在或已被移动'] };
+    }
+
+    // 危险操作：默认弹窗确认（可在设置中关闭）
+    const petConfig = getPetConfig();
+    if (petConfig.confirmTrash !== false) {
+      const preview = existing.slice(0, 5).map((p) => `• ${path.basename(p)}`).join('\n');
+      const more = existing.length > 5 ? `\n… 等共 ${existing.length} 项` : '';
+      const options = {
+        type: 'warning',
+        buttons: ['移到回收站', '取消'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        title: '移到回收站',
+        message: `确定将 ${existing.length} 个项目移到回收站吗？`,
+        detail: preview + more
+      };
+      // 挂在桌宠窗口上，保证置顶的桌宠不会把弹窗挡在后面
+      const petWin = getPetWindow();
+      let response;
+      if (petWin && !petWin.isDestroyed()) {
+        petWin.focus();
+        ({ response } = await dialog.showMessageBox(petWin, options));
+      } else {
+        ({ response } = await dialog.showMessageBox(options));
+      }
+      if (response !== 0) {
+        return { success: false, canceled: true, trashed: [], errors: [] };
+      }
+    }
+
+    const trashed = [];
+    const errors = [];
+    for (const p of existing) {
+      try {
+        await shell.trashItem(p);
+        trashed.push(p);
+      } catch (e) {
+        errors.push(`${path.basename(p)}: ${e.message}`);
+      }
+    }
+
+    console.log('[DnD] 移入回收站结果:', `成功 ${trashed.length}`, errors.length ? `失败 ${errors.length}: ${errors.join('; ')}` : '');
+
+    return {
+      success: errors.length === 0 && trashed.length > 0,
+      canceled: false,
+      trashed,
+      errors
+    };
   });
 }
 

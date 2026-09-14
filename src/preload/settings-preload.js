@@ -8,10 +8,19 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('settingsAPI', {
   // 获取所有配置
   getAllConfig: () => ipcRenderer.invoke('get-all-config'),
-  // 获取 LLM 配置
+  // 获取 / 更新 API 配置（仅用于余额查询）
   getLLMConfig: () => ipcRenderer.invoke('get-llm-config'),
-  // 更新 LLM 配置
   setLLMConfig: (config) => ipcRenderer.invoke('set-llm-config', config),
+  // 查询 API 余额（同时用于测试 API Key 是否可用）
+  getApiBalance: () => ipcRenderer.invoke('get-api-balance'),
+  // 获取 / 更新余额气泡配置
+  getBalanceConfig: () => ipcRenderer.invoke('get-balance-config'),
+  setBalanceConfig: (config) => ipcRenderer.invoke('set-balance-config', config),
+  // 气泡窗口的大小 / 位置
+  getBubbleConfig: () => ipcRenderer.invoke('get-bubble-config'),
+  setBubbleConfig: (config) => ipcRenderer.invoke('set-bubble-config', config),
+  // 预览气泡
+  previewBubble: () => ipcRenderer.invoke('preview-bubble'),
   // 获取动画配置
   getAnimationConfig: () => ipcRenderer.invoke('get-animation-config'),
   // 更新动画配置
@@ -24,8 +33,6 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   setPetConfig: (config) => ipcRenderer.invoke('set-pet-config', config),
   // 选择动画文件
   selectAnimationFile: () => ipcRenderer.invoke('select-animation-file'),
-  // 测试 API 连接
-  testConnection: (config) => ipcRenderer.invoke('test-api-connection', config),
   // 获取应用路径
   getAppPath: () => ipcRenderer.invoke('get-app-path'),
 

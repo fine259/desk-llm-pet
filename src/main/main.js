@@ -5,14 +5,18 @@
 
 const { app, BrowserWindow, ipcMain, nativeTheme, nativeImage } = require('electron');
 const path = require('path');
-const { createPetWindow, getPetWindow } = require('./pet-window');
-const { createChatWindow, getChatWindow } = require('./chat-window');
+const {
+  createPetWindow, getPetWindow, setPetGeometryListener
+} = require('./pet-window');
 const { createSettingsWindow, getSettingsWindow } = require('./settings-window');
+const { createBubbleWindow, positionBubble, hideBubble } = require('./bubble-window');
 const { createTray } = require('./tray');
 const { registerIpcHandlers } = require('./ipc-handlers');
 
 // 开发模式标记
 const isDev = process.argv.includes('--dev');
+// 代码目录与启动参数，方便确认「跑的是哪份代码」
+const CODE_ROOT = path.join(__dirname, '..', '..');
 
 // 设置应用名称（开发模式下 Dock/任务栏显示的名称）
 app.setName('DeskLLMPet');
@@ -33,6 +37,11 @@ if (!gotTheLock) {
 } else {
   app.on('second-instance', () => {
     // 用户尝试打开第二个实例时，聚焦已有窗口
+    console.warn('');
+    console.warn('⚠️  已经有一个 DeskLLMPet 在运行，本次启动被单实例锁拦截并已退出。');
+    console.warn('    如果你刚改了代码，请先在托盘菜单点「退出」关掉旧实例，再重新启动，');
+    console.warn('    否则跑的还是旧代码，改动不会生效。');
+    console.warn('');
     const petWin = getPetWindow();
     if (petWin) {
       petWin.show();
@@ -45,11 +54,26 @@ if (!gotTheLock) {
  * 应用初始化
  */
 async function initApp() {
+  console.log(`🚀 DeskLLMPet 启动 v${app.getVersion()} | 代码目录: ${CODE_ROOT} | 参数: ${process.argv.slice(1).join(' ') || '(无)'}`);
+
   // 注册所有 IPC 处理器
   registerIpcHandlers();
 
   // 创建桌宠窗口
   await createPetWindow(isDev);
+
+  // 气泡窗口（隐藏，用到时才显示）
+  createBubbleWindow();
+
+  // 桌宠移动 / 缩放 / 显隐时，气泡跟着走
+  setPetGeometryListener(() => {
+    const petWin = getPetWindow();
+    if (!petWin || !petWin.isVisible()) {
+      hideBubble();
+      return;
+    }
+    positionBubble();
+  });
 
   // 创建系统托盘（Windows 和 macOS 都可用）
   createTray();

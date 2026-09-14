@@ -1,6 +1,6 @@
 /**
  * 设置窗口逻辑
- * 处理 API 配置、动画选择、宠物设置等的可视化配置
+ * 处理 API 余额配置、动画选择、宠物设置等的可视化配置
  */
 
 // ====== 状态管理 ======
@@ -8,6 +8,7 @@ const state = {
   config: {
     llm: {},
     animations: {},
+    balance: {},
     pet: {}
   },
   availableAnimations: { idle: [], click: [] },
@@ -17,28 +18,6 @@ const state = {
 
 // ====== DOM 元素 ======
 const elements = {};
-
-// ====== API 预设 ======
-const API_PRESETS = {
-  deepseek: {
-    endpoint: 'https://api.deepseek.com/v1/chat/completions',
-    model: 'deepseek-chat',
-    maxTokens: 2048,
-    temperature: 0.7
-  },
-  openai: {
-    endpoint: 'https://api.openai.com/v1/chat/completions',
-    model: 'gpt-4',
-    maxTokens: 2048,
-    temperature: 0.7
-  },
-  custom: {
-    endpoint: '',
-    model: '',
-    maxTokens: 2048,
-    temperature: 0.7
-  }
-};
 
 // ====== 初始化 ======
 async function init() {
@@ -51,6 +30,13 @@ async function init() {
   setupTabNavigation();
   setupEventListeners();
   populateForms();
+
+  // 显示当前运行的代码目录，方便确认「跑的是哪份代码」
+  try {
+    const paths = await window.settingsAPI.getAppPath();
+    const el = document.getElementById('about-code-root');
+    if (el && paths && paths.projectRoot) el.textContent = paths.projectRoot;
+  } catch (e) { /* 忽略 */ }
 
   console.log('⚙️ 设置窗口已就绪');
 }
@@ -66,10 +52,7 @@ function cacheElements() {
   // API 配置
   elements.apiEndpoint = document.getElementById('api-endpoint');
   elements.apiKey = document.getElementById('api-key');
-  elements.apiModel = document.getElementById('api-model');
-  elements.apiMaxTokens = document.getElementById('api-max-tokens');
-  elements.apiTemperature = document.getElementById('api-temperature');
-  elements.tempValue = document.getElementById('temp-value');
+  elements.balanceEndpoint = document.getElementById('balance-endpoint');
   elements.toggleApiKey = document.getElementById('toggle-api-key');
   elements.btnTestApi = document.getElementById('btn-test-api');
   elements.btnSaveApi = document.getElementById('btn-save-api');
@@ -88,7 +71,31 @@ function cacheElements() {
   elements.petScale = document.getElementById('pet-scale');
   elements.scaleValue = document.getElementById('scale-value');
   elements.petAutoStart = document.getElementById('pet-auto-start');
+  elements.petConfirmTrash = document.getElementById('pet-confirm-trash');
   elements.btnSavePet = document.getElementById('btn-save-pet');
+
+  // 窗口裁剪
+  elements.crop = document.getElementById('pet-crop');
+  elements.cropValue = document.getElementById('crop-value');
+  elements.cropX = document.getElementById('pet-crop-x');
+  elements.cropXValue = document.getElementById('crop-x-value');
+  elements.cropY = document.getElementById('pet-crop-y');
+  elements.cropYValue = document.getElementById('crop-y-value');
+  elements.btnResetCrop = document.getElementById('btn-reset-crop');
+
+  // 气泡
+  elements.bubbleScale = document.getElementById('bubble-scale');
+  elements.bubbleScaleValue = document.getElementById('bubble-scale-value');
+  elements.bubbleOffsetX = document.getElementById('bubble-offset-x');
+  elements.bubbleXValue = document.getElementById('bubble-x-value');
+  elements.bubbleOffsetY = document.getElementById('bubble-offset-y');
+  elements.bubbleYValue = document.getElementById('bubble-y-value');
+  elements.btnPreviewBubble = document.getElementById('btn-preview-bubble');
+  elements.btnResetBubble = document.getElementById('btn-reset-bubble');
+
+  // 余额气泡
+  elements.balanceEnabled = document.getElementById('balance-enabled');
+  elements.balanceInterval = document.getElementById('balance-interval');
 }
 
 /**
@@ -136,11 +143,6 @@ function setupEventListeners() {
   // 标题栏
   elements.btnClose.addEventListener('click', () => window.settingsAPI.closeWindow());
 
-  // API 温度滑块
-  elements.apiTemperature.addEventListener('input', () => {
-    elements.tempValue.textContent = parseFloat(elements.apiTemperature.value).toFixed(1);
-  });
-
   // 显示/隐藏 API Key
   elements.toggleApiKey.addEventListener('click', () => {
     const input = elements.apiKey;
@@ -154,18 +156,10 @@ function setupEventListeners() {
   });
 
   // 保存 API 配置
-  elements.btnSaveApi.addEventListener('click', saveApiConfig);
+  elements.btnSaveApi.addEventListener('click', () => saveApiConfig(true));
 
-  // 测试 API 连接
+  // 测试 API 连接（查询余额）
   elements.btnTestApi.addEventListener('click', testApiConnection);
-
-  // 预设按钮
-  document.querySelectorAll('.preset-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const preset = btn.dataset.preset;
-      applyPreset(preset);
-    });
-  });
 
   // 宠物透明度
   elements.petOpacity.addEventListener('input', () => {
@@ -175,6 +169,55 @@ function setupEventListeners() {
   // 宠物大小
   elements.petScale.addEventListener('input', () => {
     elements.scaleValue.textContent = parseFloat(elements.petScale.value).toFixed(1) + 'x';
+  });
+
+  // 窗口裁剪：拖动即时预览（防抖写盘）
+  elements.crop.addEventListener('input', () => {
+    elements.cropValue.textContent = Math.round(parseFloat(elements.crop.value) * 100) + '%';
+    queueCropPreview();
+  });
+  elements.cropX.addEventListener('input', () => {
+    elements.cropXValue.textContent = Math.round(elements.cropX.value) + '%';
+    queueCropPreview();
+  });
+  elements.cropY.addEventListener('input', () => {
+    elements.cropYValue.textContent = Math.round(elements.cropY.value) + '%';
+    queueCropPreview();
+  });
+  elements.btnResetCrop.addEventListener('click', () => {
+    elements.crop.value = '0.55';
+    elements.cropValue.textContent = '55%';
+    elements.cropX.value = '0';
+    elements.cropXValue.textContent = '0%';
+    elements.cropY.value = '0';
+    elements.cropYValue.textContent = '0%';
+    queueCropPreview(0);
+  });
+
+  // 气泡大小 / 位置：即时生效（防抖写盘）
+  elements.bubbleScale.addEventListener('input', () => {
+    elements.bubbleScaleValue.textContent = parseFloat(elements.bubbleScale.value).toFixed(2) + 'x';
+    queueBubblePreview();
+  });
+  elements.bubbleOffsetX.addEventListener('input', () => {
+    elements.bubbleXValue.textContent = Math.round(elements.bubbleOffsetX.value) + 'px';
+    queueBubblePreview();
+  });
+  elements.bubbleOffsetY.addEventListener('input', () => {
+    elements.bubbleYValue.textContent = Math.round(elements.bubbleOffsetY.value) + 'px';
+    queueBubblePreview();
+  });
+  elements.btnPreviewBubble.addEventListener('click', () => {
+    window.settingsAPI.previewBubble();
+  });
+  elements.btnResetBubble.addEventListener('click', () => {
+    elements.bubbleScale.value = '1';
+    elements.bubbleScaleValue.textContent = '1.00x';
+    elements.bubbleOffsetX.value = '0';
+    elements.bubbleXValue.textContent = '0px';
+    elements.bubbleOffsetY.value = '0';
+    elements.bubbleYValue.textContent = '0px';
+    queueBubblePreview(0);
   });
 
   // 保存宠物设置
@@ -199,15 +242,17 @@ function setupEventListeners() {
  * 填充表单
  */
 function populateForms() {
-  const { llm, animations, pet } = state.config;
+  const { llm = {}, balance = {}, pet = {} } = state.config || {};
 
   // API 配置
   elements.apiEndpoint.value = llm.apiEndpoint || '';
   elements.apiKey.value = llm.apiKey || '';
-  elements.apiModel.value = llm.model || '';
-  elements.apiMaxTokens.value = llm.maxTokens || 2048;
-  elements.apiTemperature.value = llm.temperature || 0.7;
-  elements.tempValue.textContent = (llm.temperature || 0.7).toFixed(1);
+  elements.balanceEndpoint.value = llm.balanceEndpoint || '';
+
+  // 余额气泡
+  elements.balanceEnabled.checked = balance.enabled !== false;
+  elements.balanceInterval.value = Number.isFinite(Number(balance.intervalMinutes))
+    ? Number(balance.intervalMinutes) : 30;
 
   // 宠物设置
   elements.petOpacity.value = pet.opacity || 1;
@@ -215,6 +260,30 @@ function populateForms() {
   elements.petScale.value = pet.scale || 1;
   elements.scaleValue.textContent = (pet.scale || 1).toFixed(1) + 'x';
   elements.petAutoStart.checked = pet.autoStart === true;
+  elements.petConfirmTrash.checked = pet.confirmTrash !== false;
+
+  // 窗口裁剪
+  const crop = Number.isFinite(Number(pet.crop)) ? Number(pet.crop) : 0.55;
+  elements.crop.value = String(crop);
+  elements.cropValue.textContent = Math.round(crop * 100) + '%';
+  const offsetX = Number.isFinite(Number(pet.cropOffsetX)) ? Number(pet.cropOffsetX) : 0;
+  elements.cropX.value = String(offsetX);
+  elements.cropXValue.textContent = Math.round(offsetX) + '%';
+  const offsetY = Number.isFinite(Number(pet.cropOffsetY)) ? Number(pet.cropOffsetY) : 0;
+  elements.cropY.value = String(offsetY);
+  elements.cropYValue.textContent = Math.round(offsetY) + '%';
+
+  // 气泡
+  const bubble = state.config.bubble || {};
+  const bubbleScale = Number.isFinite(Number(bubble.scale)) ? Number(bubble.scale) : 1;
+  elements.bubbleScale.value = String(bubbleScale);
+  elements.bubbleScaleValue.textContent = bubbleScale.toFixed(2) + 'x';
+  const bubbleX = Number.isFinite(Number(bubble.offsetX)) ? Number(bubble.offsetX) : 0;
+  elements.bubbleOffsetX.value = String(bubbleX);
+  elements.bubbleXValue.textContent = Math.round(bubbleX) + 'px';
+  const bubbleY = Number.isFinite(Number(bubble.offsetY)) ? Number(bubble.offsetY) : 0;
+  elements.bubbleOffsetY.value = String(bubbleY);
+  elements.bubbleYValue.textContent = Math.round(bubbleY) + 'px';
 
   // 动画列表
   renderAnimationList('idle');
@@ -304,26 +373,28 @@ async function addAnimationFile(type) {
 
 /**
  * 保存 API 配置
+ * @param {boolean} [notify] 是否弹出保存成功提示
+ * @returns {Promise<boolean>} 是否保存成功
  */
-async function saveApiConfig() {
+async function saveApiConfig(notify = true) {
   const config = {
     apiEndpoint: elements.apiEndpoint.value.trim(),
-    apiKey: elements.apiKey.value.trim(),
-    model: elements.apiModel.value.trim(),
-    maxTokens: parseInt(elements.apiMaxTokens.value) || 2048,
-    temperature: parseFloat(elements.apiTemperature.value) || 0.7
+    balanceEndpoint: elements.balanceEndpoint.value.trim(),
+    apiKey: elements.apiKey.value.trim()
   };
 
   try {
     await window.settingsAPI.setLLMConfig(config);
-    showToast('✅ API 配置已保存');
+    if (notify) showToast('✅ API 配置已保存');
+    return true;
   } catch (e) {
     showToast('❌ 保存失败: ' + e.message);
+    return false;
   }
 }
 
 /**
- * 测试 API 连接
+ * 测试 API 连接（通过查询余额验证 Key 是否可用）
  */
 async function testApiConnection() {
   const resultEl = elements.apiTestResult;
@@ -331,24 +402,23 @@ async function testApiConnection() {
   resultEl.textContent = '⏳ 正在测试连接...';
   resultEl.className = 'test-result';
 
-  // 先保存配置
-  await saveApiConfig();
+  // 先保存配置，保证用最新参数测试
+  const saved = await saveApiConfig(false);
+  if (!saved) {
+    resultEl.textContent = '❌ 保存配置失败，请重试';
+    resultEl.className = 'test-result error';
+    return;
+  }
 
   try {
-    const config = {
-      apiEndpoint: elements.apiEndpoint.value.trim(),
-      apiKey: elements.apiKey.value.trim(),
-      model: elements.apiModel.value.trim(),
-      maxTokens: 50,
-      temperature: 0.1
-    };
-
-    const response = await window.settingsAPI.testConnection(config);
+    const response = await window.settingsAPI.getApiBalance();
     if (response && response.success) {
-      resultEl.textContent = '✅ 连接成功！API 响应正常';
+      // response.text 形如 "💰 API 余额\n¥110.00"，这里只取余额明细
+      const detail = String(response.text || '').split('\n').slice(1).join(' / ').trim();
+      resultEl.textContent = detail ? `✅ 连接成功！当前余额：${detail}` : '✅ 连接成功！API Key 可用';
       resultEl.className = 'test-result success';
     } else {
-      resultEl.textContent = '❌ 连接失败: ' + (response?.error || '未知错误');
+      resultEl.textContent = '❌ 连接失败: ' + ((response && response.error) || '未知错误');
       resultEl.className = 'test-result error';
     }
   } catch (e) {
@@ -375,45 +445,81 @@ async function saveAnimationConfig() {
 }
 
 /**
- * 保存宠物设置
+ * 画面裁剪即时预览（防抖，避免拖动滑块时频繁写盘）
+ */
+let cropPreviewTimer = null;
+function queueCropPreview(delay = 120) {
+  if (cropPreviewTimer) clearTimeout(cropPreviewTimer);
+  cropPreviewTimer = setTimeout(async () => {
+    cropPreviewTimer = null;
+    try {
+      await window.settingsAPI.setPetConfig(readCropConfig());
+    } catch (e) {
+      console.error('裁剪预览失败:', e);
+    }
+  }, delay);
+}
+
+/** 读取窗口裁剪表单值 */
+function readCropConfig() {
+  const crop = Math.min(1, Math.max(0.25, parseFloat(elements.crop.value) || 0.55));
+  const offsetX = Math.min(40, Math.max(-40, parseFloat(elements.cropX.value) || 0));
+  const offsetY = Math.min(40, Math.max(-40, parseFloat(elements.cropY.value) || 0));
+  return { crop, cropOffsetX: offsetX, cropOffsetY: offsetY };
+}
+
+/**
+ * 气泡大小 / 位置即时预览（防抖）
+ */
+let bubblePreviewTimer = null;
+function queueBubblePreview(delay = 120) {
+  if (bubblePreviewTimer) clearTimeout(bubblePreviewTimer);
+  bubblePreviewTimer = setTimeout(async () => {
+    bubblePreviewTimer = null;
+    try {
+      await window.settingsAPI.setBubbleConfig(readBubbleConfig());
+    } catch (e) {
+      console.error('气泡预览失败:', e);
+    }
+  }, delay);
+}
+
+/** 读取气泡表单值 */
+function readBubbleConfig() {
+  const scale = Math.min(1.6, Math.max(0.6, parseFloat(elements.bubbleScale.value) || 1));
+  const offsetX = Math.min(200, Math.max(-200, parseFloat(elements.bubbleOffsetX.value) || 0));
+  const offsetY = Math.min(200, Math.max(-120, parseFloat(elements.bubbleOffsetY.value) || 0));
+  return { scale, offsetX, offsetY };
+}
+
+/**
+ * 保存宠物设置 + 余额气泡设置
  */
 async function savePetConfig() {
   const config = {
     opacity: parseFloat(elements.petOpacity.value),
     scale: parseFloat(elements.petScale.value),
-    autoStart: elements.petAutoStart.checked
+    autoStart: elements.petAutoStart.checked,
+    confirmTrash: elements.petConfirmTrash.checked,
+    ...readCropConfig()
+  };
+
+  const rawInterval = Number(elements.balanceInterval.value);
+  const intervalMinutes = Number.isFinite(rawInterval) ? Math.min(1440, Math.max(0, Math.round(rawInterval))) : 30;
+  const balanceConfig = {
+    enabled: elements.balanceEnabled.checked,
+    intervalMinutes
   };
 
   try {
     await window.settingsAPI.setPetConfig(config);
+    await window.settingsAPI.setBalanceConfig(balanceConfig);
+    await window.settingsAPI.setBubbleConfig(readBubbleConfig());
+    elements.balanceInterval.value = intervalMinutes;
     showToast('✅ 宠物设置已保存');
   } catch (e) {
     showToast('❌ 保存失败: ' + e.message);
   }
-}
-
-/**
- * 应用 API 预设
- */
-function applyPreset(presetName) {
-  const preset = API_PRESETS[presetName];
-  if (!preset) return;
-
-  if (preset.endpoint) elements.apiEndpoint.value = preset.endpoint;
-  if (preset.model) elements.apiModel.value = preset.model;
-  if (preset.maxTokens) elements.apiMaxTokens.value = preset.maxTokens;
-  if (preset.temperature !== undefined) {
-    elements.apiTemperature.value = preset.temperature;
-    elements.tempValue.textContent = preset.temperature.toFixed(1);
-  }
-
-  // 对于自定义预设，清空端点
-  if (presetName === 'custom') {
-    elements.apiEndpoint.value = '';
-    elements.apiModel.value = '';
-  }
-
-  showToast(`✅ 已应用 ${presetName} 预设`);
 }
 
 /**

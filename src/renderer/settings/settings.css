@@ -410,42 +410,6 @@ body.platform-mac #title-btns {
   display: none;
 }
 
-/* ====== 预设按钮 ====== */
-.preset-buttons {
-  display: flex;
-  gap: 10px;
-}
-
-.preset-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 16px 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition);
-  flex: 1;
-}
-
-.preset-btn:hover {
-  border-color: var(--accent);
-  background: var(--accent-light);
-  color: var(--accent-hover);
-}
-
-.preset-icon {
-  font-size: 28px;
-}
-
-.preset-name {
-  font-size: 12px;
-  font-weight: 500;
-}
-
 /* ====== 动画列表 ====== */
 .anim-list {
   display: flex;

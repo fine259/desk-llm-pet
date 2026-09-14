@@ -1,7 +1,7 @@
 {
   "name": "deskllmpet",
   "version": "1.0.0",
-  "description": "桌面宠物 - 支持 LLM 对话的交互式桌面伴侣",
+  "description": "桌面宠物 - 支持 API 余额气泡、拖拽文件到回收站的交互式桌面伴侣",
   "main": "src/main/main.js",
   "author": "isKage",
   "license": "MIT",
@@ -16,6 +16,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "dev:tools": "electron . --dev --devtools",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:all": "electron-builder --win --mac",

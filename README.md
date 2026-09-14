@@ -4,7 +4,7 @@
 
 # 🐾 DeskLLMPet 桌宠大肥鱼 doge~
 
-**支持 AI 对话的交互式桌面宠物应用**
+**会报 API 余额、能帮你把文件丢进回收站的桌面宠物**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/electron-28.3.3-9feaf9.svg)](https://www.electronjs.org/)
@@ -31,22 +31,32 @@
 ### 🎬 桌面宠物
 - **WebM 动画播放**：支持透明通道的 WebM 动画素材
 - **随机动画切换**：从闲置动画池中随机挑选播放
-- **点击互动**：鼠标点击切换反应动画，显示可爱提示文字
+- **窗口裁剪**：动画本身保持原大小，窗口只保留中间一块 —— 宠物大小不变，周围不重要的背景被裁掉，窗口更小更贴身（裁剪比例 + 画面水平/垂直偏移，拖动即时预览）
+- **点击互动**：鼠标点击切换反应动画，并展示 API 余额卡片
 - **拖拽移动**：按住宠物拖拽到屏幕任意位置
-- **右键菜单**：快速访问对话、设置、隐藏等功能
+- **右键菜单**：快速访问余额、设置、隐藏等功能
 
-### 💬 AI 对话
-- **现代聊天界面**：模仿 DeepSeek 网页端设计风格
-- **流式响应**：支持 SSE 流式输出，实时显示回复
-- **多模型支持**：兼容 OpenAI API 格式（DeepSeek、OpenAI 等）
-- **对话历史**：本地持久化保存，支持清空和查看
-- 更多功能待改进...
+### 💰 API 余额气泡
+- **独立气泡窗口**：气泡是单独的透明悬浮窗，浮在宠物上方，**不会遮挡宠物、不挡鼠标操作**；宠物缩小后气泡也不会显得突兀
+- **大小 / 位置可调**：气泡大小 0.6~1.6 倍，水平 / 垂直偏移自由调，设置页可一键「预览气泡」
+- **余额卡片**：大字号展示总余额，附充值 / 赠送明细与可用状态
+- **定时展示**：每隔 t 分钟（可配置，0 表示关闭）自动展示一次
+- **点击即查**：点一下桌宠立刻查询并展示 DeepSeek 账户余额
+- **官方接口**：调用 `https://api.deepseek.com/user/balance`，余额接口地址可自定义
+- **失败提示**：未配置 Key、网络异常时给出明确的错误气泡
+
+### 🗑️ 拖文件给桌宠
+- **拖拽回收**：把文件/文件夹拖到桌宠身上，松开即移入系统回收站（可从回收站恢复）
+- **拖入反馈**：拖到桌宠上会高亮并提示「松开移到回收站」
+- **专属动画**：预留「拖入文件」动画位，素材就绪后自动生效（暂留空）
+- **安全确认**：默认弹窗确认（挂在桌宠窗口上，不会被置顶桌宠挡住），可在设置中关闭
 
 ### ⚙️ 可视化配置
-- **API 配置**：直观配置 API 地址、密钥、模型等参数
+- **API 配置**：配置 API Key、API 地址、余额查询地址
 - **动画素材管理**：可视化选择闲置/点击动画池
-- **外观设置**：调节 Pet 透明度、大小缩放（Windows 系统需退出重进生效）
-- **快速预设**：一键填入 DeepSeek/OpenAI 常用配置
+- **外观设置**：调节宠物透明度、宠物大小、窗口裁剪比例与画面偏移
+- **气泡设置**：气泡大小、水平/垂直偏移、预览
+- **行为设置**：余额气泡开关与间隔、移入回收站前确认
 
 ---
 
@@ -110,13 +120,18 @@ npm run build:all   # 同时打包两个平台
 
 ## 🔑 API 配置
 
-应用启动后，右键点击宠物 → **设置**，配置你的 LLM API：
+应用启动后，右键点击宠物 → **设置 → API 配置**，填写 DeepSeek API Key：
 
-| 服务 | API 地址 | 模型示例 |
-|------|---------|---------|
-| DeepSeek | `https://api.deepseek.com/v1/chat/completions` | `deepseek-chat` |
-| OpenAI | `https://api.openai.com/v1/chat/completions` | `gpt-4`, `gpt-3.5-turbo` |
-| 自定义 | 你的 API 地址（兼容 OpenAI 格式） | 你的模型名 |
+| 配置项 | 说明 |
+|--------|------|
+| API Key | 在 [DeepSeek 开放平台](https://platform.deepseek.com/api_keys) 创建，形如 `sk-xxxx` |
+| API 地址 | 默认 `https://api.deepseek.com`，余额接口按「域名 + `/user/balance`」自动推导 |
+| 余额查询地址（可选） | 使用代理或自建服务时填写，留空则按上方地址推导 |
+
+配置好之后：
+- 点击桌宠 → 气泡展示当前余额；
+- 默认每 30 分钟自动展示一次（可在 **设置 → 宠物设置 → 余额气泡** 调整间隔 t 或关闭）；
+- 托盘菜单「立即查看 API 余额」也可手动触发。
 
 > 🔒 API 密钥仅保存在本地，不会上传到任何服务器。
 
@@ -161,7 +176,7 @@ build/
 # 2. 删除应用
 rm -rf /Applications/DeskLLMPet.app
 
-# 3. 清理应用数据（缓存、配置、对话历史）
+# 3. 清理应用数据（缓存、配置）
 rm -rf ~/Library/Application\ Support/deskllmpet
 
 # 4. 清理日志（可选）
@@ -187,7 +202,7 @@ rm -rf ~/Library/Logs/DeskLLMPet
 **手动清理残留数据：**
 
 ```
-# 删除应用数据目录（配置、对话历史、缓存）
+# 删除应用数据目录（配置、缓存）
 %APPDATA%\deskllmpet
 
 # 通常位于：
@@ -200,8 +215,8 @@ C:\Users\<用户名>\AppData\Roaming\deskllmpet
 
 | 目录/文件 | 内容 | 删除后影响 |
 |-----------|------|-----------|
-| `~/Library/Application Support/deskllmpet/` (macOS) | 配置、API密钥、对话历史 | 所有设置和对话记录丢失 |
-| `%APPDATA%\deskllmpet` (Windows) | 配置、API密钥、对话历史 | 所有设置和对话记录丢失 |
+| `~/Library/Application Support/deskllmpet/` (macOS) | 配置、API密钥 | 所有设置丢失 |
+| `%APPDATA%\deskllmpet` (Windows) | 配置、API密钥 | 所有设置丢失 |
 | `~/Library/Logs/DeskLLMPet/` (macOS) | 应用日志 | 仅日志丢失，不影响功能 |
 | `/Applications/DeskLLMPet.app` (macOS) | 应用本体 | 应用不可用 |
 
@@ -218,21 +233,18 @@ DeskLLMPet/
 │   ├── main/                    # Electron 主进程
 │   │   ├── main.js              # 入口，应用生命周期
 │   │   ├── pet-window.js        # 桌宠透明窗口
-│   │   ├── chat-window.js       # LLM 对话窗口
 │   │   ├── settings-window.js   # 设置窗口
 │   │   ├── tray.js              # 系统托盘
 │   │   └── ipc-handlers.js      # IPC 通信处理
 │   ├── preload/                 # 预加载脚本（安全桥接）
 │   │   ├── pet-preload.js
-│   │   ├── chat-preload.js
 │   │   └── settings-preload.js
 │   ├── renderer/                # 渲染进程（UI 页面）
 │   │   ├── pet/                 # 桌宠页面
-│   │   ├── chat/                # 对话页面
 │   │   └── settings/            # 设置页面
 │   └── shared/                  # 共享模块
 │       ├── store.js             # 持久化存储
-│       └── llm-client.js        # LLM API 客户端
+│       └── deepseek-api.js      # DeepSeek 余额查询客户端
 ├── assets/
 │   ├── animations/              # 动画素材
 │   │   ├── idle/                # 闲置动画
@@ -256,7 +268,7 @@ DeskLLMPet/
 | [electron-builder](https://www.electron.build/) | 打包与分发 |
 | [electron-store](https://github.com/sindresorhus/electron-store) | 本地持久化存储 |
 | 原生 HTML/CSS/JS | 渲染进程 UI |
-| OpenAI 兼容 API | LLM 对话服务 |
+| DeepSeek 余额接口 | API 余额查询 |
 
 ---
 
@@ -265,8 +277,39 @@ DeskLLMPet/
 ### 开发模式
 
 ```bash
-npm run dev  # 运行应用并打开 DevTools
+npm run dev        # 运行应用（不自动打开调试器）
+npm run dev:tools  # 需要调试时：运行应用并打开 DevTools
 ```
+
+> 调试器窗口（DevTools）会从 Google 的 `chrome-devtools-frontend.appspot.com` 加载前端页面，
+> 所以默认**不再自动打开**；需要时用 `npm run dev:tools`，或在应用菜单里按 `⌥⌘I`。
+
+### ⚠️ 改了代码但好像没生效？
+
+应用有单实例锁：**如果旧的 DeskLLMPet 还在运行，再启动一次会被直接拦掉并退出**（终端会打印提示），
+跑的就还是旧代码。改完代码请先在托盘菜单点「退出」关掉旧实例，再重新 `npm run dev`。
+
+启动时终端第一行会打印代码目录，设置页「关于」里也能看到**运行目录**，可用来确认跑的是哪份代码：
+
+```
+🚀 DeskLLMPet 启动 v1.0.0 | 代码目录: /path/to/DeskLLMPet | 参数: . --dev
+```
+
+### 排查：拖文件到桌宠没反应
+
+应用会把拖拽事件和回收站结果打印到终端（`npm run dev` 的窗口），形如：
+
+```
+[DnD] dragenter → types=[Files] items=[file/text/plain]
+[DnD] drop → types=[Files] items=[] files=1
+[DnD] paths → /Users/xxx/Desktop/a.txt
+[DnD] trash-items 收到: /Users/xxx/Desktop/a.txt
+[DnD] 移入回收站结果: 成功 1
+```
+
+- 连 `[DnD] dragenter` 都没有：系统没有把拖拽事件投递给窗口，请带上系统版本反馈；
+- 有 `dragenter` 没有 `paths`：说明拿不到文件路径（会同时弹气泡提示）；
+- 有 `paths` 但结果是失败：通常是 macOS 没有授权该应用访问文件夹（系统设置 → 隐私与安全性 → 文件与文件夹 / 完全磁盘访问权限）。
 
 ### 安全原则
 

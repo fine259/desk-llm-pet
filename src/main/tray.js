@@ -8,7 +8,6 @@
 const { Tray, Menu, app, nativeImage } = require('electron');
 const path = require('path');
 const { togglePetWindow, getPetWindow } = require('./pet-window');
-const { createChatWindow } = require('./chat-window');
 const { createSettingsWindow } = require('./settings-window');
 
 let tray = null;
@@ -24,8 +23,13 @@ function buildMenu() {
       click: () => togglePetWindow()
     },
     {
-      label: '打开 AI 对话',
-      click: () => createChatWindow()
+      label: '立即查看 API 余额',
+      click: () => {
+        const petWin = getPetWindow();
+        if (!petWin) return;
+        if (!petWin.isVisible()) petWin.show();
+        petWin.webContents.send('show-balance');
+      }
     },
     { type: 'separator' },
     {
@@ -41,7 +45,7 @@ function buildMenu() {
           type: 'info',
           title: '关于 DeskLLMPet',
           message: 'DeskLLMPet v1.0.0',
-          detail: '一款支持 LLM 对话的交互式桌面宠物应用。\n\n基于 Electron 构建，支持 Windows 和 macOS。\n\n🔗 GitHub: https://github.com/isKage/desk-llm-pet',
+          detail: '一款支持 API 余额气泡、文件拖拽回收的交互式桌面宠物应用。\n\n基于 Electron 构建，支持 Windows 和 macOS。\n\n🔗 GitHub: https://github.com/isKage/desk-llm-pet',
           buttons: ['确定', '访问 GitHub'],
           defaultId: 0,
           cancelId: 0
