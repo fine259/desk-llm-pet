@@ -12,6 +12,7 @@ const {
 } = require('./pet-window');
 const { createSettingsWindow, getSettingsWindow } = require('./settings-window');
 const { createBubbleWindow, positionBubble, hideBubble } = require('./bubble-window');
+const { createMenuWindow, hideMenuWindow } = require('./menu-window');
 const { createTray } = require('./tray');
 const { registerIpcHandlers } = require('./ipc-handlers');
 const { getLLMConfig } = require('../shared/store');
@@ -36,7 +37,7 @@ app.setName('DeskLLMPet');
 if (process.platform === 'darwin') {
   app.setAboutPanelOptions({
     applicationName: 'DeskLLMPet',
-    applicationVersion: '1.0.0',
+    applicationVersion: app.getVersion(),
     credits: '基于 Electron 构建的桌面宠物应用'
   });
 }
@@ -80,10 +81,14 @@ async function initApp() {
   // 气泡窗口（隐藏，用到时才显示）
   createBubbleWindow();
 
-  // 桌宠移动 / 缩放 / 显隐时，气泡跟着走
+  // 右键菜单窗口（隐藏，用到时才显示；独立窗口才能按菜单内容自适应大小）
+  createMenuWindow();
+
+  // 桌宠移动 / 缩放 / 显隐时，气泡跟着走，菜单先收起来
   setPetGeometryListener(() => {
+    hideMenuWindow();
     const petWin = getPetWindow();
-    if (!petWin || !petWin.isVisible()) {
+    if (!petWin || petWin.isDestroyed() || !petWin.isVisible()) {
       hideBubble();
       return;
     }
@@ -167,6 +172,7 @@ app.on('activate', () => {
 
 // 应用退出前清理
 app.on('before-quit', () => {
+  hideMenuWindow();
   const host = pluginManager && typeof pluginManager.getPluginHost === 'function'
     ? pluginManager.getPluginHost()
     : null;

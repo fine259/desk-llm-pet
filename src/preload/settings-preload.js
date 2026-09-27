@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   setBubbleConfig: (config) => ipcRenderer.invoke('set-bubble-config', config),
   // 预览气泡
   previewBubble: () => ipcRenderer.invoke('preview-bubble'),
+  // 预览双击自定义语句
+  previewPhrase: (text) => ipcRenderer.invoke('preview-phrase', { text }),
   // 获取动画配置
   getAnimationConfig: () => ipcRenderer.invoke('get-animation-config'),
   // 更新动画配置

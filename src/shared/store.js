@@ -18,7 +18,9 @@ const defaults = {
   },
   balance: {
     enabled: true,
-    intervalMinutes: 30
+    intervalMinutes: 30,
+    // 关闭余额气泡后，双击桌宠随机展示的自定义语句（每行一句）
+    customPhrases: []
   },
   pet: {
     opacity: 1.0,
@@ -52,8 +54,38 @@ function getLLMConfig() { return { ...defaults.llm, ...getStore().get('llm') }; 
 function setLLMConfig(config) { getStore().set('llm', { ...getLLMConfig(), ...config }); }
 
 // ====== 余额气泡配置 ======
+
+/** 单条自定义语句的最大长度 */
+const MAX_PHRASE_LENGTH = 200;
+/** 自定义语句最多条数 */
+const MAX_PHRASE_COUNT = 50;
+
+/**
+ * 清洗自定义语句：去掉空行、合并换行、去重、限长限量
+ * 纯函数，写盘前统一用它，避免脏数据落到配置里
+ */
+function normalizeCustomPhrases(input) {
+  if (!Array.isArray(input)) return [];
+  const result = [];
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue;
+    const text = raw.replace(/\s+/g, ' ').trim().slice(0, MAX_PHRASE_LENGTH);
+    if (!text || result.includes(text)) continue;
+    result.push(text);
+    if (result.length >= MAX_PHRASE_COUNT) break;
+  }
+  return result;
+}
+
 function getBalanceConfig() { return { ...defaults.balance, ...getStore().get('balance') }; }
-function setBalanceConfig(config) { getStore().set('balance', { ...getBalanceConfig(), ...config }); }
+
+function setBalanceConfig(config) {
+  const next = { ...getBalanceConfig(), ...config };
+  if (config && config.customPhrases !== undefined) {
+    next.customPhrases = normalizeCustomPhrases(config.customPhrases);
+  }
+  getStore().set('balance', next);
+}
 
 // ====== 动画配置 ======
 function getAnimationConfig() { return { ...defaults.animations, ...getStore().get('animations') }; }
@@ -85,6 +117,7 @@ function getAllConfig() {
 module.exports = {
   getLLMConfig, setLLMConfig,
   getBalanceConfig, setBalanceConfig,
+  normalizeCustomPhrases, MAX_PHRASE_LENGTH, MAX_PHRASE_COUNT,
   getAnimationConfig, setAnimationConfig,
   getPetConfig, setPetConfig,
   getBubbleConfig, setBubbleConfig,

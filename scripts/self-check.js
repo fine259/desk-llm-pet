@@ -168,7 +168,7 @@ async function main() {
 // 1. 语法检查
 // ============================================================================
 
-console.log('\n[1/5] 语法检查 (node --check)');
+console.log('\n[1/6] 语法检查 (node --check)');
 const jsFiles = listFiles(SRC, (f) => f.endsWith('.js'));
 check(`共 ${jsFiles.length} 个 JS 文件语法正确`, () => {
   const broken = [];
@@ -186,7 +186,7 @@ check(`共 ${jsFiles.length} 个 JS 文件语法正确`, () => {
 // 2. 插件宿主
 // ============================================================================
 
-console.log('\n[2/5] 插件宿主');
+console.log('\n[2/6] 插件宿主');
 
 const { createPluginManager, sanitizeFields, sanitizeMenuItems } = require('../src/plugins/plugin-manager');
 
@@ -340,7 +340,7 @@ await checkAsync('deactivateAll 注销通道并关闭插件窗口', async () => 
 // 3. 插件内部纯逻辑（对话客户端 / 会话仓库）
 // ============================================================================
 
-console.log('\n[3/5] 插件内部逻辑');
+console.log('\n[3/6] 插件内部逻辑');
 
 const { resolveChatEndpoint, parseSseLine, createSseParser } = require('../src/plugins/llm-chat/chat-client');
 const { createConversationStore } = require('../src/plugins/llm-chat/conversations');
@@ -394,10 +394,118 @@ check('会话仓库：创建 / 追加 / 自动标题 / 删除', () => {
 });
 
 // ============================================================================
-// 4. 独立性 & 回归
+// 4. 右键菜单 & 双击气泡
 // ============================================================================
 
-console.log('\n[4/5] 独立性与回归');
+console.log('\n[4/6] 右键菜单与双击气泡');
+
+const { computeMenuBounds, MAX_WIDTH } = require('../src/main/menu-window');
+const { normalizeCustomPhrases, MAX_PHRASE_LENGTH, MAX_PHRASE_COUNT } = require('../src/shared/store');
+
+check('自定义语句写盘前会被清洗（去空行 / 折叠换行 / 去重 / 限长限量）', () => {
+  assertEqual(normalizeCustomPhrases(null).length, 0, '非数组应回退为空');
+  assertEqual(normalizeCustomPhrases('你好').length, 0, '非数组字符串应被忽略');
+  assertEqual(normalizeCustomPhrases([' 你好 ', '', '   ', '你好', 42, 'a\nb']).join('|'), '你好|a b', '清洗结果不一致');
+  assertEqual(normalizeCustomPhrases(['x'.repeat(500)])[0].length, MAX_PHRASE_LENGTH, '超长语句未截断');
+  const many = Array.from({ length: MAX_PHRASE_COUNT + 20 }, (_, i) => `第 ${i} 句`);
+  assertEqual(normalizeCustomPhrases(many).length, MAX_PHRASE_COUNT, '条数未限制');
+});
+
+check('右键菜单：贴着鼠标展开，且任何情况下都完整落在屏幕内', () => {
+  const workArea = { x: 0, y: 0, width: 1440, height: 900 };
+  const size = { width: 200, height: 260 };
+
+  const normal = computeMenuBounds({ anchor: { x: 300, y: 200 }, size, workArea });
+  assertEqual(`${normal.x},${normal.y},${normal.width},${normal.height}`, '302,202,200,260', '常规展开位置不对');
+
+  // 屏幕右下角：翻到鼠标左上侧，仍然完整可见
+  const corner = computeMenuBounds({ anchor: { x: 1436, y: 896 }, size, workArea });
+  assert(corner.x >= workArea.x && corner.x + corner.width <= workArea.width, `横向越界: ${JSON.stringify(corner)}`);
+  assert(corner.y >= workArea.y && corner.y + corner.height <= workArea.height, `纵向越界: ${JSON.stringify(corner)}`);
+
+  // 插件菜单项特别多：高度收敛在屏幕内（菜单内部滚动），不会被裁掉
+  const manyItems = computeMenuBounds({ anchor: { x: 100, y: 100 }, size: { width: 200, height: 5000 }, workArea });
+  assert(manyItems.height <= workArea.height - 8, `高度未收敛: ${manyItems.height}`);
+  assert(manyItems.y + manyItems.height <= workArea.height, `纵向越界: ${JSON.stringify(manyItems)}`);
+
+  // 超长插件名：宽度有上限（菜单内用省略号）
+  const wide = computeMenuBounds({ anchor: { x: 100, y: 100 }, size: { width: 3000, height: 120 }, workArea });
+  assert(wide.width <= MAX_WIDTH, `宽度未收敛: ${wide.width}`);
+
+  // 任务栏在顶部（可用区域 y 不为 0）时同样不能越界
+  const shifted = { x: 0, y: 40, width: 1440, height: 860 };
+  const onShifted = computeMenuBounds({ anchor: { x: 1000, y: 880 }, size, workArea: shifted });
+  assert(onShifted.y + onShifted.height <= shifted.y + shifted.height, `越界: ${JSON.stringify(onShifted)}`);
+});
+
+check('右键菜单：主进程与渲染进程的通道已经连线', () => {
+  const petPreload = readFile('src/preload/pet-preload.js');
+  const menuPreload = readFile('src/preload/menu-preload.js');
+  const menuMain = readFile('src/main/menu-window.js');
+  const ipc = readFile('src/main/ipc-handlers.js');
+
+  assert(/ipcRenderer\.invoke\('open-pet-menu'/.test(petPreload), 'pet-preload 未暴露 openPetMenu');
+  assert(/ipcRenderer\.on\('pet-menu-action'/.test(petPreload), 'pet-preload 未监听 pet-menu-action');
+  assert(/ipcMain\.handle\('open-pet-menu'/.test(ipc), '未注册 open-pet-menu');
+  assert(/webContents\.send\('pet-menu-action'/.test(menuMain), 'menu-window 未发送 pet-menu-action');
+
+  assert(/ipcRenderer\.on\('menu-show'/.test(menuPreload), 'menu-preload 未监听 menu-show');
+  assert(/webContents\.send\('menu-show'\)/.test(menuMain), 'menu-window 未发送 menu-show');
+  assert(/ipcRenderer\.send\('menu-size'/.test(menuPreload), 'menu-preload 未上报 menu-size');
+  assert(/ipcMain\.on\('menu-size'/.test(ipc), '未注册 menu-size');
+  assert(/ipcMain\.on\('menu-select'/.test(ipc), '未注册 menu-select');
+  assert(/ipcMain\.on\('menu-close'/.test(ipc), '未注册 menu-close');
+  assert(/'renderer',\s*'menu',\s*'menu\.html'/.test(menuMain), '菜单窗口未加载 menu.html');
+});
+
+check('桌宠页面不再自带会被窗口裁掉的右键菜单', () => {
+  assert(!/context-menu/.test(readFile('src/renderer/pet/pet.html')), 'pet.html 仍在页面内渲染菜单');
+  assert(!/context-menu/.test(readFile('src/renderer/pet/pet.css')), 'pet.css 仍残留页面内菜单样式');
+  assert(!/context-menu/.test(readFile('src/renderer/pet/pet.js')), 'pet.js 仍残留页面内菜单逻辑');
+  assert(/openPetMenu/.test(readFile('src/renderer/pet/pet.js')), 'pet.js 未改为请求独立菜单窗口');
+});
+
+check('桌宠：单击只播动画，双击才弹气泡（余额或自定义语句）', () => {
+  const pet = readFile('src/renderer/pet/pet.js');
+  assert(/const DOUBLE_CLICK_MS\s*=\s*\d+/.test(pet), '缺少双击判定阈值');
+  assert(/function handlePetClick\(/.test(pet), '缺少单击 / 双击分发入口');
+  assert(/\} else \{\s*playClickReaction\(\);\s*\}/.test(pet), '单击分支应当只播放点击反应动画');
+  assert(/if \(isDoubleClick\) \{\s*triggerBubble\(\);/.test(pet), '双击分支未触发气泡');
+  const randomBubble = pet.slice(pet.indexOf('function showRandomBubble()'));
+  assert(/customPhrases/.test(randomBubble.slice(0, 400)), '随机气泡未接入自定义语句');
+
+  const settingsHtml = readFile('src/renderer/settings/settings.html');
+  assert(/id="balance-phrases"/.test(settingsHtml), '设置页缺少自定义语句输入框');
+  assert(/id="btn-preview-phrase"/.test(settingsHtml), '设置页缺少自定义语句预览按钮');
+  assert(/previewPhrase/.test(readFile('src/preload/settings-preload.js')), 'settings-preload 未暴露 previewPhrase');
+});
+
+check('发布信息一致：版本号 / 发布说明文件 / 安装包名对得上', () => {
+  const pkg = JSON.parse(readFile('package.json'));
+  assert(/^\d+\.\d+\.\d+$/.test(pkg.version), `package.json 版本号格式异常: ${pkg.version}`);
+
+  const notesRel = `RELEASE_v${pkg.version}.md`;
+  assert(fs.existsSync(path.join(ROOT, notesRel)), `缺少发布说明文件 ${notesRel}`);
+  const notes = readFile(notesRel);
+  assert(notes.includes(`v${pkg.version}`), `${notesRel} 里没有出现 v${pkg.version}`);
+  for (const asset of [
+    `DeskLLMPet-${pkg.version}-arm64.dmg`,
+    `DeskLLMPet-${pkg.version}.dmg`,
+    `DeskLLMPet.Setup.${pkg.version}.exe`
+  ]) {
+    assert(notes.includes(asset), `${notesRel} 未提到安装包 ${asset}`);
+  }
+
+  // 设置页「关于」的静态兜底版本号也要跟上（拿不到主进程版本时显示的就是它）
+  const about = readFile('src/renderer/settings/settings.html');
+  assert(about.includes(`v${pkg.version}`), `设置页关于版本号未同步到 v${pkg.version}`);
+});
+
+// ============================================================================
+// 5. 独立性 & 回归
+// ============================================================================
+
+console.log('\n[5/6] 独立性与回归');
 
 check('本体核心文件不引用任何具体插件（插件化隔离）', () => {
   const coreFiles = [
@@ -474,7 +582,7 @@ check('IPC 处理器与预加载脚本暴露的通道一一对应', () => {
       }
     }
   }
-  const preloads = ['src/preload/pet-preload.js', 'src/preload/settings-preload.js'];
+  const preloads = ['src/preload/pet-preload.js', 'src/preload/settings-preload.js', 'src/preload/menu-preload.js'];
   const used = new Set();
   for (const file of preloads) {
     for (const m of readFile(file).matchAll(/ipcRenderer\.(?:invoke|send)\('([^']+)'/g)) used.add(m[1]);
@@ -484,10 +592,10 @@ check('IPC 处理器与预加载脚本暴露的通道一一对应', () => {
 });
 
 // ============================================================================
-// 5. 结构一致性
+// 6. 结构一致性
 // ============================================================================
 
-console.log('\n[5/5] 结构一致性');
+console.log('\n[6/6] 结构一致性');
 
 check('插件清单与宿主校验规则一致', () => {
   for (const dir of fs.readdirSync(SRC, { withFileTypes: true })) {
@@ -524,6 +632,7 @@ check('渲染进程 getElementById 的 id 都真实存在', () => {
   const DYNAMIC_IDS = new Set(['placeholder-canvas', 'streaming-message']);
   const pairs = [
     ['src/renderer/pet/pet.js', 'src/renderer/pet/pet.html'],
+    ['src/renderer/menu/menu.js', 'src/renderer/menu/menu.html'],
     ['src/renderer/settings/settings.js', 'src/renderer/settings/settings.html'],
     ['src/renderer/bubble/bubble.js', 'src/renderer/bubble/bubble.html'],
     ['src/plugins/llm-chat/renderer/chat.js', 'src/plugins/llm-chat/renderer/chat.html']

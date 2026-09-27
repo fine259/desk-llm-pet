@@ -32,11 +32,13 @@ async function init() {
   setupEventListeners();
   populateForms();
 
-  // 显示当前运行的代码目录，方便确认「跑的是哪份代码」
+  // 显示当前运行的代码目录与版本，方便确认「跑的是哪份代码」
   try {
     const paths = await window.settingsAPI.getAppPath();
     const el = document.getElementById('about-code-root');
     if (el && paths && paths.projectRoot) el.textContent = paths.projectRoot;
+    const versionEl = document.querySelector('#tab-about .version');
+    if (versionEl && paths && paths.version) versionEl.textContent = `v${paths.version}`;
   } catch (e) { /* 忽略 */ }
 
   // 插件设置面板（没有插件时什么都不做）
@@ -97,6 +99,9 @@ function cacheElements() {
   // 余额气泡
   elements.balanceEnabled = document.getElementById('balance-enabled');
   elements.balanceInterval = document.getElementById('balance-interval');
+  elements.balancePhrases = document.getElementById('balance-phrases');
+  elements.balancePhrasesHint = document.getElementById('balance-phrases-hint');
+  elements.btnPreviewPhrase = document.getElementById('btn-preview-phrase');
 }
 
 /**
@@ -229,6 +234,10 @@ function setupEventListeners() {
   // 保存宠物设置
   elements.btnSavePet.addEventListener('click', savePetConfig);
 
+  // 双击自定义语句：开关联动提示 + 预览
+  elements.balanceEnabled.addEventListener('change', updatePhraseHint);
+  elements.btnPreviewPhrase.addEventListener('click', previewPhrase);
+
   // 关于页面 GitHub 链接
   const githubLink = document.getElementById('about-github-link');
   if (githubLink) {
@@ -259,6 +268,11 @@ function populateForms() {
   elements.balanceEnabled.checked = balance.enabled !== false;
   elements.balanceInterval.value = Number.isFinite(Number(balance.intervalMinutes))
     ? Number(balance.intervalMinutes) : 30;
+  // 双击自定义语句（每行一句）
+  elements.balancePhrases.value = Array.isArray(balance.customPhrases)
+    ? balance.customPhrases.join('\n')
+    : '';
+  updatePhraseHint();
 
   // 宠物设置
   elements.petOpacity.value = pet.opacity || 1;
@@ -498,6 +512,41 @@ function readBubbleConfig() {
 }
 
 /**
+ * 读取「双击自定义语句」输入框（每行一句，忽略空行）
+ * @returns {string[]}
+ */
+function readCustomPhrases() {
+  return String(elements.balancePhrases.value || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/** 根据余额气泡开关更新自定义语句的提示与样式 */
+function updatePhraseHint() {
+  const enabled = elements.balanceEnabled.checked;
+  elements.balancePhrases.classList.toggle('inactive', enabled);
+  elements.balancePhrasesHint.textContent = enabled
+    ? '当前启用了余额气泡：双击桌宠展示余额，这些语句暂不生效'
+    : '未启用余额气泡：双击桌宠会从这里随机展示一句；留空则使用内置问候语';
+}
+
+/** 预览一句自定义语句（随机挑一句，未保存也能看效果） */
+function previewPhrase() {
+  const phrases = readCustomPhrases();
+  if (phrases.length === 0) {
+    showToast('先写一句自定义语句再预览吧');
+    return;
+  }
+  const text = phrases[Math.floor(Math.random() * phrases.length)];
+  window.settingsAPI.previewPhrase(text).then((result) => {
+    if (result && result.success === false) {
+      showToast(result.reason === 'pet-hidden' ? '桌宠已隐藏，先显示桌宠再预览' : '预览失败，请稍后再试');
+    }
+  }).catch(() => { /* 预览失败不影响保存 */ });
+}
+
+/**
  * 保存宠物设置 + 余额气泡设置
  */
 async function savePetConfig() {
@@ -512,7 +561,8 @@ async function savePetConfig() {
   const intervalMinutes = Number.isFinite(rawInterval) ? Math.min(1440, Math.max(0, Math.round(rawInterval))) : 30;
   const balanceConfig = {
     enabled: elements.balanceEnabled.checked,
-    intervalMinutes
+    intervalMinutes,
+    customPhrases: readCustomPhrases()
   };
 
   try {
@@ -520,6 +570,7 @@ async function savePetConfig() {
     await window.settingsAPI.setBalanceConfig(balanceConfig);
     await window.settingsAPI.setBubbleConfig(readBubbleConfig());
     elements.balanceInterval.value = intervalMinutes;
+    updatePhraseHint();
     showToast('✅ 宠物设置已保存');
   } catch (e) {
     showToast('❌ 保存失败: ' + e.message);

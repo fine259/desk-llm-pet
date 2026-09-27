@@ -12,6 +12,7 @@ const {
   getAnimationConfig, setAnimationConfig,
   getPetConfig, setPetConfig,
   getBubbleConfig, setBubbleConfig,
+  normalizeCustomPhrases, MAX_PHRASE_LENGTH,
   getAllConfig
 } = require('../shared/store');
 const { fetchBalance, formatBalanceText } = require('../shared/deepseek-api');
@@ -21,6 +22,9 @@ const {
   getPetWindow, notifyGeometryChange
 } = require('./pet-window');
 const { showBubble, hideBubble, applyBubbleSize, createBubbleWindow } = require('./bubble-window');
+const {
+  openMenuWindow, hideMenuWindow, applyMenuSize, sendMenuSelection
+} = require('./menu-window');
 
 /**
  * 向桌宠窗口发送消息（安全检查）
@@ -72,8 +76,12 @@ function registerIpcHandlers() {
       if (config.enabled !== undefined) next.enabled = !!config.enabled;
       if (config.intervalMinutes !== undefined) {
         const minutes = Number(config.intervalMinutes);
-        // 0 表示只在点击时展示；其余限制在 1 ~ 1440 分钟之间
+        // 0 表示只在双击时展示；其余限制在 1 ~ 1440 分钟之间
         next.intervalMinutes = Number.isFinite(minutes) ? Math.min(1440, Math.max(0, minutes)) : 30;
+      }
+      // 自定义语句：关闭余额气泡后，双击桌宠随机展示其中一句
+      if (config.customPhrases !== undefined) {
+        next.customPhrases = normalizeCustomPhrases(config.customPhrases);
       }
       setBalanceConfig(next);
       sendToPet('balance-config-changed', getBalanceConfig());
@@ -158,6 +166,32 @@ function registerIpcHandlers() {
   // 气泡展示结束
   ipcMain.on('bubble-hide', () => hideBubble());
 
+  // 预览双击自定义语句（设置页使用，未保存也能看效果）
+  ipcMain.handle('preview-phrase', (event, payload) => {
+    const raw = payload && typeof payload.text === 'string' ? payload.text : '';
+    const text = raw.trim().slice(0, MAX_PHRASE_LENGTH);
+    if (!text) return { success: false, error: '语句为空' };
+    return showBubble({ kind: 'text', text, duration: 3200 });
+  });
+
+  // ====== 桌宠右键菜单（独立菜单窗口） ======
+  // 桌宠渲染进程把鼠标位置（窗口内坐标）报上来，这里换算成屏幕坐标后展开菜单
+  ipcMain.handle('open-pet-menu', (event, payload) => {
+    const pet = getPetWindow();
+    if (!pet || pet.isDestroyed() || !pet.isVisible()) return { success: false, reason: 'pet-hidden' };
+    const [petX, petY] = pet.getPosition();
+    const offsetX = Number(payload && payload.x) || 0;
+    const offsetY = Number(payload && payload.y) || 0;
+    return openMenuWindow({ anchor: { x: petX + offsetX, y: petY + offsetY } });
+  });
+
+  // 菜单渲染进程回报内容尺寸 → 自适应窗口大小并贴到鼠标位置
+  ipcMain.on('menu-size', (event, size) => applyMenuSize(size));
+  // 选中某一项 → 收起菜单并转交桌宠执行（本体动作 / 插件命令）
+  ipcMain.on('menu-select', (event, payload) => sendMenuSelection(payload));
+  // 请求收起菜单
+  ipcMain.on('menu-close', () => hideMenuWindow());
+
   ipcMain.handle('get-all-config', () => getAllConfig());
 
   // ====== 窗口操作 ======
@@ -207,6 +241,8 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('get-app-path', () => ({
+    // 版本号取自 package.json，避免发布时忘记同步界面上的版本
+    version: app.getVersion(),
     userData: app.getPath('userData'),
     appData: app.getPath('appData'),
     assets: path.join(__dirname, '..', '..', 'assets', 'animations'),

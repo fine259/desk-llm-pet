@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/electron-28.3.3-9feaf9.svg)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey.svg)](#)
-[![Release](https://img.shields.io/badge/release-v1.0.0-brightgreen.svg)](https://github.com/isKage/desk-llm-pet/releases)
+[![Release](https://img.shields.io/badge/release-v1.1.0-brightgreen.svg)](https://github.com/isKage/desk-llm-pet/releases)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](https://github.com/isKage/desk-llm-pet/pulls)
 
 
@@ -32,16 +32,17 @@
 - **WebM 动画播放**：支持透明通道的 WebM 动画素材
 - **随机动画切换**：从闲置动画池中随机挑选播放
 - **窗口裁剪**：动画本身保持原大小，窗口只保留中间一块 —— 宠物大小不变，周围不重要的背景被裁掉，窗口更小更贴身（裁剪比例 + 画面水平/垂直偏移，拖动即时预览）
-- **点击互动**：鼠标点击切换反应动画，并展示 API 余额卡片
+- **点击互动**：**单击**桌宠切换反应动画；**双击**桌宠弹气泡（余额卡片或自定义语句）
 - **拖拽移动**：按住宠物拖拽到屏幕任意位置
-- **右键菜单**：快速访问余额、设置、隐藏等功能
+- **右键菜单**：独立的菜单窗口，尺寸按菜单内容自适应，插件菜单项再多也不会被遮挡
 
 ### 💰 API 余额气泡
 - **独立气泡窗口**：气泡是单独的透明悬浮窗，浮在宠物上方，**不会遮挡宠物、不挡鼠标操作**；宠物缩小后气泡也不会显得突兀
 - **大小 / 位置可调**：气泡大小 0.6~1.6 倍，水平 / 垂直偏移自由调，设置页可一键「预览气泡」
 - **余额卡片**：大字号展示总余额，附充值 / 赠送明细与可用状态
 - **定时展示**：每隔 t 分钟（可配置，0 表示关闭）自动展示一次
-- **点击即查**：点一下桌宠立刻查询并展示 DeepSeek 账户余额
+- **双击即查**：双击桌宠立刻查询并展示 DeepSeek 账户余额（单击只播动画）
+- **自定义语句**：关闭余额气泡后，双击桌宠会从自定义语句里随机展示一句（设置页可编辑、可预览）
 - **官方接口**：调用 `https://api.deepseek.com/user/balance`，余额接口地址可自定义
 - **失败提示**：未配置 Key、网络异常时给出明确的错误气泡
 
@@ -64,7 +65,7 @@
 - **外观设置**：调节宠物透明度、宠物大小、窗口裁剪比例与画面偏移
 - **气泡设置**：气泡大小、水平/垂直偏移、预览
 - **AI 对话**：插件自带的配置面板（Key、模型、temperature、max_tokens、流式开关、系统提示词）
-- **行为设置**：余额气泡开关与间隔
+- **行为设置**：余额气泡开关与间隔、双击自定义语句
 
 ---
 
@@ -76,9 +77,11 @@
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
-| 🍎 macOS | `DeskLLMPet-1.0.0-arm64.dmg` | Apple Silicon (M1/M2/M3) |
-| 🍎 macOS | `DeskLLMPet-1.0.0-x64.dmg` | Intel Mac |
-| 🪟 Windows | `DeskLLMPet-Setup-1.0.0.exe` | x64 安装程序 |
+| 🍎 macOS | `DeskLLMPet-1.1.0-arm64.dmg` | Apple Silicon (M1/M2/M3/M4) |
+| 🍎 macOS | `DeskLLMPet-1.1.0.dmg` | Intel Mac (x64) |
+| 🪟 Windows | `DeskLLMPet.Setup.1.1.0.exe` | x64 安装程序 |
+
+> 打包产物本地文件名里是空格（`DeskLLMPet Setup 1.1.0.exe`），上传到 GitHub 后显示成点（`DeskLLMPet.Setup.1.1.0.exe`），是同一个文件。
 
 #### macOS 安装
 
@@ -93,6 +96,14 @@
 2. 选择安装路径，按向导完成安装
 3. 安装完成后自动创建桌面快捷方式
 4. 双击快捷方式启动应用
+
+#### 更新到新版本（覆盖安装即可）
+
+已经装过旧版本时，**不需要先卸载**，配置也不会丢：
+
+- **Windows**：直接双击新版 `.exe`，安装程序会识别已安装的旧版本并原地覆盖升级（沿用上次的安装目录）；桌宠正在运行时会提示先关闭它。配置在 `%APPDATA%\deskllmpet`。
+- **macOS**：双击新 `.dmg` 挂载，把 `DeskLLMPet.app` 拖进「应用程序」，提示已存在时选 **替换**。配置在 `~/Library/Application Support/deskllmpet`。
+- ⚠️ 目前**没有内置自动更新**，需要到 Releases 页面手动下载新版覆盖安装。
 
 
 <div align="center">
@@ -110,19 +121,29 @@
 git clone https://github.com/isKage/desk-llm-pet.git
 cd DeskLLMPet
 
-# 2. 安装依赖
+# 2. 安装依赖（Node.js 18+）
 npm install
 
 # 3. 直接运行（开发模式）
 npm run dev
 
 # 4. 打包安装包
-npm run build:mac   # 打包 macOS
-npm run build:win   # 打包 Windows
+npm run build:mac   # 打包 macOS（.dmg，同时出 x64 + arm64）
+npm run build:win   # 打包 Windows（NSIS 安装程序，x64）
 npm run build:all   # 同时打包两个平台
 ```
 
-> 📦 打包产物在 `dist/` 目录下。
+打包产物都在 `dist/` 目录下，文件名取自 `package.json` 的 `version`（发布前记得改版本号）：
+
+| 命令 | 产物 |
+|------|------|
+| `npm run build:mac` | `DeskLLMPet-1.1.0.dmg`（Intel）、`DeskLLMPet-1.1.0-arm64.dmg`（Apple Silicon） |
+| `npm run build:win` | `DeskLLMPet Setup 1.1.0.exe`（安装程序）、`win-unpacked/`（免安装版） |
+
+> ⚠️ 打包注意事项：
+> - macOS 包必须在 macOS 上打；Windows 安装包可以在 macOS 上交叉打包（本项目 `dist/` 里的 exe 就是这么来的），失败时可加 `--config.win.signAndEditExecutable=false`，或改到 Windows 机器 / CI 上打。
+> - 默认**不打签名**：macOS 用户首次打开需要「右键 → 打开」或到「隐私与安全性」里允许，Windows 可能弹 SmartScreen 提示。要消除提示需要 Apple Developer ID（配合公证）与 Windows 代码签名证书。
+> - 发布时把 `dist/` 里的 `.dmg` / `.exe` 上传到 GitHub Release 即可，用户**直接双击安装包即可覆盖更新**（详见上方「更新到新版本」）。
 
 ---
 
@@ -137,9 +158,10 @@ npm run build:all   # 同时打包两个平台
 | 余额查询地址（可选） | 使用代理或自建服务时填写，留空则按上方地址推导 |
 
 配置好之后：
-- 点击桌宠 → 气泡展示当前余额；
+- **双击**桌宠 → 气泡展示当前余额（单击只播放点击反应动画）；
 - 默认每 30 分钟自动展示一次（可在 **设置 → 宠物设置 → 余额气泡** 调整间隔 t 或关闭）；
-- 托盘菜单「立即查看 API 余额」也可手动触发。
+- 托盘菜单「立即查看 API 余额」也可手动触发；
+- 关闭「启用余额气泡」后，双击桌宠会从 **设置 → 宠物设置 → 余额气泡 → 双击自定义语句** 里随机展示一句（每行一句，留空则用内置问候语，可点「预览语句」先看效果）。
 
 > 🔒 API 密钥仅保存在本地，不会上传到任何服务器。
 
@@ -255,15 +277,20 @@ DeskLLMPet/
 │   ├── main/                    # Electron 主进程
 │   │   ├── main.js              # 入口，应用生命周期
 │   │   ├── pet-window.js        # 桌宠透明窗口
+│   │   ├── bubble-window.js     # 气泡悬浮窗口
+│   │   ├── menu-window.js       # 右键菜单窗口（按内容自适应大小）
 │   │   ├── settings-window.js   # 设置窗口
 │   │   ├── tray.js              # 系统托盘（含插件菜单项）
 │   │   └── ipc-handlers.js      # 本体 IPC 通信处理
 │   ├── preload/                 # 预加载脚本（安全桥接）
-│   │   ├── pet-preload.js       # 含插件菜单扩展点
+│   │   ├── pet-preload.js       # 含插件命令扩展点
+│   │   ├── menu-preload.js      # 右键菜单窗口桥接
+│   │   ├── bubble-preload.js    # 气泡窗口桥接
 │   │   └── settings-preload.js  # 含插件设置扩展点
 │   ├── renderer/                # 渲染进程（UI 页面）
 │   │   ├── pet/                 # 桌宠页面
 │   │   ├── bubble/              # 余额气泡窗口
+│   │   ├── menu/                # 右键菜单窗口
 │   │   └── settings/            # 设置页面（含插件设置面板容器）
 │   ├── shared/                  # 共享模块
 │   │   ├── store.js             # 持久化存储
@@ -329,7 +356,7 @@ npm run dev:tools  # 需要调试时：运行应用并打开 DevTools
 启动时终端第一行会打印代码目录，设置页「关于」里也能看到**运行目录**，可用来确认跑的是哪份代码：
 
 ```
-🚀 DeskLLMPet 启动 v1.0.0 | 代码目录: /path/to/DeskLLMPet | 参数: . --dev
+🚀 DeskLLMPet 启动 v1.1.0 | 代码目录: /path/to/DeskLLMPet | 参数: . --dev
 ```
 
 ### 🧩 插件开发

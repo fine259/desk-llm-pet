@@ -25,16 +25,17 @@ contextBridge.exposeInMainWorld('petAPI', {
   hidePet: () => ipcRenderer.invoke('hide-pet'),
   quitApp: () => ipcRenderer.invoke('quit-app'),
 
+  // 右键菜单：请求在鼠标位置展开独立菜单窗口
+  openPetMenu: (position) => ipcRenderer.invoke('open-pet-menu', position),
+  // 菜单选中某一项后由主进程回传（本体动作 / 插件命令）
+  onMenuAction: (callback) => {
+    ipcRenderer.on('pet-menu-action', (event, payload) => callback(payload));
+  },
+
   // ====== 插件扩展点 ======
-  // 插件贡献的桌宠右键菜单项（插件系统不可用时返回空数组）
-  getPluginMenuItems: () => ipcRenderer.invoke('plugins:get-pet-menu'),
   // 触发插件命令（例如打开插件的窗口）
   runPluginCommand: (pluginId, command, payload) =>
     ipcRenderer.invoke('plugins:run-command', pluginId, command, payload),
-  // 插件加载完成 / 变化时重新拉取菜单
-  onPluginsChanged: (callback) => {
-    ipcRenderer.on('plugins:changed', () => callback());
-  },
 
   // 监听：动画配置变更（设置页面保存后实时生效）
   onReloadAnimations: (callback) => {

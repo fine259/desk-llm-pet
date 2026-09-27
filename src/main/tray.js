@@ -93,7 +93,7 @@ function buildMenu() {
         dialog.showMessageBox({
           type: 'info',
           title: '关于 DeskLLMPet',
-          message: 'DeskLLMPet v1.0.0',
+          message: `DeskLLMPet v${app.getVersion()}`,
           detail: '一款支持 API 余额气泡、可插件化扩展的桌面宠物应用。\n\n基于 Electron 构建，支持 Windows 和 macOS。\n\n🔗 GitHub: https://github.com/isKage/desk-llm-pet',
           buttons: ['确定', '访问 GitHub'],
           defaultId: 0,

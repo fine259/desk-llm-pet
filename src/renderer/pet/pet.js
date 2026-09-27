@@ -1,6 +1,6 @@
 /**
  * 桌宠渲染进程逻辑
- * 拖拽移动、点击反应、API 余额气泡，以及插件贡献的右键菜单项
+ * 拖拽移动、点击反应、双击气泡（余额 / 自定义语句），以及插件贡献的右键菜单（独立菜单窗口）
  */
 
 // ====== 状态管理 ======
@@ -19,6 +19,7 @@ const state = {
   dragStartY: 0,
   hasMoved: false,
   dragAnimTriggered: false,    // 是否已触发拖拽动画
+  lastClickAt: 0,              // 上一次单击时间，用于判定双击
 
   autoIdleTimer: null,
   balanceTimer: null,
@@ -27,6 +28,7 @@ const state = {
   balance: {
     enabled: true,
     intervalMinutes: 30,
+    customPhrases: [],         // 关闭余额气泡后，双击随机展示的自定义语句
     fetching: false,           // 是否正在请求余额
     lastText: '',              // 最近一次成功的余额文案
     lastData: null,            // 最近一次成功的余额数据（用于冷却期内重绘卡片）
@@ -44,21 +46,23 @@ const state = {
     cropOffsetY: 0
   },
 
-  appPath: { assets: '', projectRoot: '' },
-  pluginMenuItems: []          // 插件贡献的右键菜单项（无插件时为空）
+  appPath: { assets: '', projectRoot: '' }
 };
 
 /** 余额气泡自动展示的初始延迟（毫秒） */
 const BALANCE_FIRST_DELAY = 3000;
 /** 手动点击触发余额查询的最小间隔（毫秒），避免连点刷接口 */
 const BALANCE_MANUAL_COOLDOWN = 5000;
+/** 双击判定阈值（毫秒）：拿不到系统点击次数时，两次单击间隔小于它算一次双击 */
+const DOUBLE_CLICK_MS = 400;
+
+/** 没有自定义语句时使用的内置问候语 */
+const DEFAULT_PHRASES = ['戳我干嘛~', '嘿嘿 😊', '🐾 嗷呜~嗷呜~', '我在呢！', '❤️❤️❤️❤️❤️', '💭', '偷偷告诉你，双击我会说话哦', '🤗🤗🤗', '喵~喵~喵~', '别叫我蓝色大肥鱼！！！', '好困 zZZ', '吃白饭🍚🍚🍚'];
 
 // ====== DOM 元素 ======
 const elements = {
   container: document.getElementById('pet-container'),
-  video: document.getElementById('pet-video'),
-  contextMenu: document.getElementById('context-menu'),
-  pluginMenuHost: document.getElementById('plugin-menu-items')
+  video: document.getElementById('pet-video')
 };
 
 // ====== 初始化 ======
@@ -72,7 +76,6 @@ async function init() {
   setupIpcListeners();
   startIdleAnimation();
   startBalanceTimer();
-  await loadPluginMenuItems();
 
   // 启动后稍作延迟展示一次余额，让用户确认配置是否生效
   if (state.balance.enabled) {
@@ -82,7 +85,7 @@ async function init() {
   console.log('🐾 DeskLLMPet 就绪',
     `闲置:${state.idlePool.length} 点击:${state.clickPool.length} 拖拽:${state.dragAnimPath ? '✓' : '✗'}`,
     `窗口裁剪:${Math.round((Number(state.config.crop) || 0.55) * 100)}%`,
-    `插件菜单:${state.pluginMenuItems.length}`);
+    `自定义语句:${state.balance.customPhrases.length}`);
 }
 
 async function loadConfig() {
@@ -170,7 +173,18 @@ function applyBalanceConfig(config) {
     const minutes = Number(config.intervalMinutes);
     state.balance.intervalMinutes = Number.isFinite(minutes) ? Math.max(0, minutes) : 30;
   }
+  if (config.customPhrases !== undefined) {
+    state.balance.customPhrases = normalizePhrases(config.customPhrases);
+  }
   startBalanceTimer();
+}
+
+/** 自定义语句：只保留非空字符串（主进程写盘前已清洗过一次，这里再兜一层） */
+function normalizePhrases(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((phrase) => typeof phrase === 'string' && phrase.trim())
+    .map((phrase) => phrase.trim());
 }
 
 function setupIpcListeners() {
@@ -203,39 +217,27 @@ function setupIpcListeners() {
     showBalance({ force: true });
   });
 
+  // 右键菜单选中了某一项（菜单在独立窗口里，选中后由主进程回传）
+  if (typeof window.petAPI.onMenuAction === 'function') {
+    window.petAPI.onMenuAction((payload) => {
+      if (!payload) return;
+      if (payload.pluginId) runPluginCommand(payload.pluginId, payload.command);
+      else handleMenuAction(payload.action);
+    });
+  }
+
   window.petAPI.onThemeChanged((theme) => {
     document.body.setAttribute('data-theme', theme);
   });
-
-  // 插件系统加载 / 变化时刷新右键菜单里的插件项
-  if (typeof window.petAPI.onPluginsChanged === 'function') {
-    window.petAPI.onPluginsChanged(() => loadPluginMenuItems());
-  }
 }
 
 function setupEventListeners() {
-  const { container, contextMenu } = elements;
+  const { container } = elements;
 
   container.addEventListener('mousedown', onMouseDown);
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseup', onMouseUp);
   container.addEventListener('contextmenu', onContextMenu);
-
-  document.addEventListener('click', (e) => {
-    if (!contextMenu.contains(e.target)) contextMenu.classList.add('hidden');
-  });
-
-  contextMenu.addEventListener('click', (e) => {
-    const menuItem = e.target.closest('.menu-item');
-    if (!menuItem) return;
-    // 插件贡献的菜单项：交给插件系统处理
-    if (menuItem.dataset.pluginId) {
-      runPluginCommand(menuItem.dataset.pluginId, menuItem.dataset.command);
-    } else {
-      handleMenuAction(menuItem.dataset.action);
-    }
-    contextMenu.classList.add('hidden');
-  });
 
   elements.video.addEventListener('error', onVideoError);
   document.addEventListener('keydown', onKeyDown);
@@ -281,8 +283,8 @@ function onMouseUp(e) {
     // 恢复闲置动画
     if (!state.isPlayingClick) playRandomIdle();
   } else {
-    // 没有移动 → 单击
-    handleClick();
+    // 没有移动 → 单击 / 双击
+    handlePetClick(e);
   }
 }
 
@@ -314,14 +316,40 @@ function triggerDragAnimation() {
 
 // ====== 交互处理 ======
 
-function handleClick() {
+/**
+ * 单击 / 双击分发
+ * 单击：只播放点击反应动画（不再弹气泡）
+ * 双击：弹气泡 —— 启用余额时展示余额，否则随机展示一句自定义语句
+ *
+ * 双击优先用浏览器给的点击次数（跟系统双击速度设置一致），
+ * 拿不到时退回到时间间隔判断
+ * @param {MouseEvent} [e] mouseup 事件
+ */
+function handlePetClick(e) {
+  const now = Date.now();
+  const isDoubleClick = Number(e && e.detail) === 2 || (now - state.lastClickAt <= DOUBLE_CLICK_MS);
+  // 双击后清零，避免连点三下被判定成两次双击
+  state.lastClickAt = isDoubleClick ? 0 : now;
+
+  if (isDoubleClick) {
+    triggerBubble();
+  } else {
+    playClickReaction();
+  }
+}
+
+/** 单击反应：播放点击动画（没有点击动画时抖一下） */
+function playClickReaction() {
   if (state.isPlayingClick || state.isPlayingDrag) return;
   if (state.clickPool.length > 0) {
     playClickAnimation();
   } else {
     shakePet();
   }
+}
 
+/** 双击触发的气泡：余额气泡（启用时）或自定义语句气泡 */
+function triggerBubble() {
   if (state.balance.enabled) {
     showBalance();
   } else {
@@ -340,19 +368,11 @@ function shakePet() {
 
 function onContextMenu(e) {
   e.preventDefault();
-  const menu = elements.contextMenu;
-  const rect = elements.container.getBoundingClientRect();
-
-  // 先显示再量尺寸：插件菜单项数量不固定，按实际大小做边界收敛
-  menu.classList.remove('hidden');
-  const menuW = menu.offsetWidth || 170;
-  const menuH = menu.offsetHeight || 200;
-
-  let mx = e.clientX - rect.left, my = e.clientY - rect.top;
-  if (mx + menuW > rect.width) mx = rect.width - menuW;
-  if (my + menuH > rect.height) my = rect.height - menuH;
-  menu.style.left = Math.max(0, mx) + 'px';
-  menu.style.top = Math.max(0, my) + 'px';
+  // 菜单放在独立的透明窗口里：宠物窗口太小，菜单放在窗口内会被裁掉
+  if (typeof window.petAPI.openPetMenu !== 'function') return;
+  window.petAPI.openPetMenu({ x: e.clientX, y: e.clientY }).catch((err) => {
+    console.warn('右键菜单打开失败:', err && err.message);
+  });
 }
 
 function handleMenuAction(action) {
@@ -368,7 +388,6 @@ function onKeyDown(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
     e.preventDefault(); window.petAPI.hidePet();
   }
-  if (e.key === 'Escape') elements.contextMenu.classList.add('hidden');
 }
 
 // ====== API 余额气泡 ======
@@ -459,44 +478,6 @@ async function showBalance(options = {}) {
 }
 
 // ====== 插件贡献的右键菜单 ======
-
-/**
- * 拉取插件贡献的桌宠右键菜单项
- * 插件系统不可用 / 没有插件时保持原菜单不变
- */
-async function loadPluginMenuItems() {
-  if (typeof window.petAPI.getPluginMenuItems !== 'function') return;
-  try {
-    const items = await window.petAPI.getPluginMenuItems();
-    renderPluginMenuItems(Array.isArray(items) ? items : []);
-  } catch (e) {
-    console.warn('插件菜单加载失败（不影响本体功能）:', e.message);
-  }
-}
-
-/**
- * 渲染插件菜单项
- * @param {Array<{pluginId: string, command: string, label: string, icon?: string}>} items
- */
-function renderPluginMenuItems(items) {
-  state.pluginMenuItems = items;
-  const host = elements.pluginMenuHost;
-  if (!host) return;
-
-  if (items.length === 0) {
-    host.innerHTML = '';
-    host.classList.add('hidden');
-    return;
-  }
-
-  host.innerHTML = items.map((item) => {
-    const icon = escapeHtml(item.icon || '🧩');
-    const label = escapeHtml(item.label || item.command || '插件功能');
-    return `<div class="menu-item" data-plugin-id="${escapeAttr(item.pluginId)}" data-command="${escapeAttr(item.command)}">` +
-      `<span class="menu-icon">${icon}</span><span>${label}</span></div>`;
-  }).join('');
-  host.classList.remove('hidden');
-}
 
 /** 触发插件命令（例如打开插件窗口） */
 async function runPluginCommand(pluginId, command) {
@@ -724,26 +705,14 @@ function formatBalancePlain(data) {
   return head + '\n' + balances.map((b) => `${symbolOf(b.currency)}${b.totalBalance}`).join('\n');
 }
 
+/**
+ * 随机展示一句自定义语句（没配置时用内置问候语）
+ * 只在关闭余额气泡后由双击触发
+ */
 function showRandomBubble() {
-  const msgs = ['你好呀！👋', '戳我干嘛~', '嘿嘿 😊', '有什么需要帮忙的吗？', '🐾 嗷呜~', '我在呢！', '❤️', '✨', '💭', '偷偷告诉你，点击我可以看 API 余额', '🤗', '喵~', '汪汪！', '你好！我是 DeskLLMPet', '🌟'];
-  showBubble(msgs[Math.floor(Math.random() * msgs.length)], 2000);
-}
-
-// ====== 工具函数 ======
-
-/** HTML 转义 */
-function escapeHtml(text) {
-  return String(text == null ? '' : text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/** HTML 属性转义（用于 data-* 属性） */
-function escapeAttr(text) {
-  return escapeHtml(text);
+  const custom = state.balance.customPhrases;
+  const phrases = custom.length > 0 ? custom : DEFAULT_PHRASES;
+  showBubble(phrases[Math.floor(Math.random() * phrases.length)], 2500);
 }
 
 // ====== 启动 ======
