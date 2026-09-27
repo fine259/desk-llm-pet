@@ -118,50 +118,9 @@ html, body {
   }
 }
 
-/* ====== 拖入文件提示 ====== */
-#pet-container.file-drop-active {
-  filter: drop-shadow(0 0 14px rgba(74, 222, 128, 0.85));
-}
-
-#drop-hint {
-  position: absolute;
-  bottom: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: calc(100% - 8px);
-  padding: 5px 8px;
-  border-radius: 12px;
-  background: rgba(22, 22, 40, 0.92);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(74, 222, 128, 0.45);
-  color: #d7ffe6;
-  font-size: 11px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  white-space: nowrap;
-  z-index: 150;
-  pointer-events: none;
-}
-
-#drop-hint.hidden {
+/* ====== 插件贡献的菜单项（无插件时隐藏，不影响原有菜单） ====== */
+#plugin-menu-items.hidden {
   display: none;
-}
-
-.drop-hint-icon {
-  font-size: 13px;
-}
-
-@keyframes dropHintPulse {
-  0%, 100% { transform: translateX(-50%) scale(1); }
-  50% { transform: translateX(-50%) scale(1.04); }
-}
-
-#drop-hint:not(.hidden) {
-  animation: dropHintPulse 1s ease-in-out infinite;
 }
 
 /* ====== 状态指示器 ====== */
@@ -209,10 +168,5 @@ html, body {
   .menu-item:hover {
     background: rgba(0, 0, 0, 0.05);
     color: #111;
-  }
-  #drop-hint {
-    background: rgba(255, 255, 255, 0.95);
-    color: #1f6f43;
-    border-color: rgba(31, 111, 67, 0.35);
   }
 }

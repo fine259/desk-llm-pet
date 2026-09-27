@@ -60,3 +60,8 @@ readme-assets/*.gif
 
 # AGENT.md
 AGENT.md
+
+# 自检产生的临时 userData（npm run check:renderer）
+.smoke-userdata/
+
+backup/

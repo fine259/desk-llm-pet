@@ -40,5 +40,17 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   closeWindow: () => ipcRenderer.invoke('close-settings-window'),
 
   // 打开外部链接
-  openExternal: (url) => ipcRenderer.invoke('open-external', url)
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
+  // ====== 插件扩展点 ======
+  // 已加载的插件列表
+  getPlugins: () => ipcRenderer.invoke('plugins:list'),
+  // 插件声明的设置面板（title / fields / actions）
+  getPluginSettingsSections: () => ipcRenderer.invoke('plugins:get-settings-sections'),
+  // 读取 / 保存某个插件的设置
+  getPluginSettings: (pluginId) => ipcRenderer.invoke('plugins:get-settings', pluginId),
+  setPluginSettings: (pluginId, values) => ipcRenderer.invoke('plugins:set-settings', pluginId, values),
+  // 触发插件设置页上的动作按钮（例如「测试连接」）
+  runPluginSettingsAction: (pluginId, actionId, values) =>
+    ipcRenderer.invoke('plugins:run-settings-action', pluginId, actionId, values)
 });

@@ -1,6 +1,6 @@
 /**
  * 桌宠渲染进程逻辑
- * 拖拽移动、点击反应、API 余额气泡、拖入文件移入回收站
+ * 拖拽移动、点击反应、API 余额气泡，以及插件贡献的右键菜单项
  */
 
 // ====== 状态管理 ======
@@ -13,16 +13,12 @@ const state = {
   idlePool: [],
   clickPool: [],
   dragAnimPath: null,          // 拖拽动画路径
-  fileDropAnimPath: null,      // 拖入文件动画路径（暂留空，素材补充后自动启用）
 
   isDragging: false,
   dragStartX: 0,
   dragStartY: 0,
   hasMoved: false,
   dragAnimTriggered: false,    // 是否已触发拖拽动画
-
-  isFileDragOver: false,       // 是否有文件悬停在桌宠上
-  dropHintTimer: null,         // 拖入文件动画结束后的复位计时器
 
   autoIdleTimer: null,
   balanceTimer: null,
@@ -43,13 +39,13 @@ const state = {
     opacity: 1.0,
     scale: 1.0,
     idleInterval: 15000,
-    confirmTrash: true,
     crop: 0.55,
     cropOffsetX: 0,
     cropOffsetY: 0
   },
 
-  appPath: { assets: '', projectRoot: '' }
+  appPath: { assets: '', projectRoot: '' },
+  pluginMenuItems: []          // 插件贡献的右键菜单项（无插件时为空）
 };
 
 /** 余额气泡自动展示的初始延迟（毫秒） */
@@ -62,7 +58,7 @@ const elements = {
   container: document.getElementById('pet-container'),
   video: document.getElementById('pet-video'),
   contextMenu: document.getElementById('context-menu'),
-  dropHint: document.getElementById('drop-hint'),
+  pluginMenuHost: document.getElementById('plugin-menu-items')
 };
 
 // ====== 初始化 ======
@@ -71,12 +67,12 @@ async function init() {
   applyCrop();
   await loadAnimations();
   findDragAnimation();
-  findFileDropAnimation();
   setupEventListeners();
-  setupDragAndDrop();
+  setupDropSafetyGuard();
   setupIpcListeners();
   startIdleAnimation();
   startBalanceTimer();
+  await loadPluginMenuItems();
 
   // 启动后稍作延迟展示一次余额，让用户确认配置是否生效
   if (state.balance.enabled) {
@@ -85,7 +81,8 @@ async function init() {
 
   console.log('🐾 DeskLLMPet 就绪',
     `闲置:${state.idlePool.length} 点击:${state.clickPool.length} 拖拽:${state.dragAnimPath ? '✓' : '✗'}`,
-    `窗口裁剪:${Math.round((Number(state.config.crop) || 0.55) * 100)}%`);
+    `窗口裁剪:${Math.round((Number(state.config.crop) || 0.55) * 100)}%`,
+    `插件菜单:${state.pluginMenuItems.length}`);
 }
 
 async function loadConfig() {
@@ -100,7 +97,6 @@ async function loadConfig() {
     state.appPath = appPath;
     state._savedIdlePool = animConfig.idlePool || [];
     state._savedClickPool = animConfig.clickPool || [];
-    state._savedFileDropAnim = animConfig.fileDropAnim || '';
     applyBalanceConfig(balanceConfig);
   } catch (e) { console.error('加载配置失败:', e); }
 }
@@ -141,9 +137,8 @@ async function loadAnimations() {
     if (state.idlePool.length === 0) state.idlePool = allIdle;
     if (state.clickPool.length === 0) state.clickPool = allClick;
 
-    // 重新查找拖拽 / 拖入文件动画
+    // 重新查找拖拽动画
     findDragAnimation();
-    findFileDropAnimation();
 
     delete state._savedIdlePool;
     delete state._savedClickPool;
@@ -166,26 +161,6 @@ function findDragAnimation() {
 }
 
 /**
- * 查找「拖入文件」专用动画
- * 暂留空：当前素材库中没有对应动画，匹配不到时保持 null（不播放特定动画）
- * 后续把命名为「拖入文件 / 接收文件 / 回收站」等的 .webm 放入 assets/thumb 即可自动启用，
- * 也可以在动画配置里通过 animations.fileDropAnim 指定文件名。
- */
-function findFileDropAnimation() {
-  const configured = (state._savedFileDropAnim || '').trim();
-  const allAnims = [...state.idlePool, ...state.clickPool];
-
-  if (configured) {
-    const hit = allAnims.find(a => a.name === configured);
-    state.fileDropAnimPath = hit ? hit.path : null;
-    return;
-  }
-
-  const found = allAnims.find(a => /拖入文件|接收文件|文件回收|回收站|垃圾桶/i.test(a.name));
-  state.fileDropAnimPath = found ? found.path : null; // 暂留空
-}
-
-/**
  * 应用余额气泡配置并重启定时器
  */
 function applyBalanceConfig(config) {
@@ -203,7 +178,6 @@ function setupIpcListeners() {
     console.log('🔄 动画配置变更，实时重载');
     state._savedIdlePool = animConfig.idlePool || [];
     state._savedClickPool = animConfig.clickPool || [];
-    state._savedFileDropAnim = animConfig.fileDropAnim || '';
     await loadAnimations();
     if (!state.isPlayingClick && !state.isPlayingDrag) playRandomIdle();
   });
@@ -211,7 +185,6 @@ function setupIpcListeners() {
   window.petAPI.onConfigChanged((config) => {
     if (config.scale !== undefined) state.config.scale = config.scale;
     if (config.opacity !== undefined) state.config.opacity = config.opacity;
-    if (config.confirmTrash !== undefined) state.config.confirmTrash = config.confirmTrash;
     if (config.crop !== undefined) state.config.crop = config.crop;
     if (config.cropOffsetX !== undefined) state.config.cropOffsetX = config.cropOffsetX;
     if (config.cropOffsetY !== undefined) state.config.cropOffsetY = config.cropOffsetY;
@@ -233,6 +206,11 @@ function setupIpcListeners() {
   window.petAPI.onThemeChanged((theme) => {
     document.body.setAttribute('data-theme', theme);
   });
+
+  // 插件系统加载 / 变化时刷新右键菜单里的插件项
+  if (typeof window.petAPI.onPluginsChanged === 'function') {
+    window.petAPI.onPluginsChanged(() => loadPluginMenuItems());
+  }
 }
 
 function setupEventListeners() {
@@ -250,7 +228,12 @@ function setupEventListeners() {
   contextMenu.addEventListener('click', (e) => {
     const menuItem = e.target.closest('.menu-item');
     if (!menuItem) return;
-    handleMenuAction(menuItem.dataset.action);
+    // 插件贡献的菜单项：交给插件系统处理
+    if (menuItem.dataset.pluginId) {
+      runPluginCommand(menuItem.dataset.pluginId, menuItem.dataset.command);
+    } else {
+      handleMenuAction(menuItem.dataset.action);
+    }
     contextMenu.classList.add('hidden');
   });
 
@@ -329,27 +312,6 @@ function triggerDragAnimation() {
   }
 }
 
-/**
- * 播放「拖入文件」专属动画
- * 暂留空：未配置对应素材时不改变当前动画，仅给一次轻微反馈
- * @returns {boolean} 是否播放了专属动画
- */
-function playFileDropAnimation() {
-  const animPath = state.fileDropAnimPath;
-  if (!animPath) {
-    // TODO: 拖入文件的专属动画暂留空，素材就绪后放入 assets 即可自动启用
-    return false;
-  }
-
-  state.isPlayingClick = false;
-  state.isPlayingDrag = true;
-  playVideoOnce(animPath, () => {
-    state.isPlayingDrag = false;
-    if (!state.isPlayingClick) playRandomIdle();
-  });
-  return true;
-}
-
 // ====== 交互处理 ======
 
 function handleClick() {
@@ -380,12 +342,17 @@ function onContextMenu(e) {
   e.preventDefault();
   const menu = elements.contextMenu;
   const rect = elements.container.getBoundingClientRect();
+
+  // 先显示再量尺寸：插件菜单项数量不固定，按实际大小做边界收敛
+  menu.classList.remove('hidden');
+  const menuW = menu.offsetWidth || 170;
+  const menuH = menu.offsetHeight || 200;
+
   let mx = e.clientX - rect.left, my = e.clientY - rect.top;
-  if (mx + 170 > rect.width) mx = rect.width - 170;
-  if (my + 200 > rect.height) my = rect.height - 200;
+  if (mx + menuW > rect.width) mx = rect.width - menuW;
+  if (my + menuH > rect.height) my = rect.height - menuH;
   menu.style.left = Math.max(0, mx) + 'px';
   menu.style.top = Math.max(0, my) + 'px';
-  menu.classList.remove('hidden');
 }
 
 function handleMenuAction(action) {
@@ -420,8 +387,8 @@ function startBalanceTimer() {
 
   const intervalMs = state.balance.intervalMinutes * 60 * 1000;
   state.balanceTimer = setInterval(() => {
-    // 正在拖拽/拖入文件时不打扰
-    if (state.isDragging || state.isFileDragOver) return;
+    // 正在拖拽宠物时不打扰
+    if (state.isDragging) return;
     showBalance({ silent: true });
   }, intervalMs);
 }
@@ -491,184 +458,70 @@ async function showBalance(options = {}) {
   return false;
 }
 
-// ====== 拖入文件 → 回收站 ======
+// ====== 插件贡献的右键菜单 ======
 
-function setupDragAndDrop() {
-  // 避免拖入文件时窗口直接跳转到该文件
-  window.addEventListener('dragover', (e) => {
-    const dt = e.dataTransfer;
-    if (!dt) return;
-    // 文件拖拽（或无法判断类型）时都要 preventDefault，否则浏览器会取消 drop
-    e.preventDefault();
-    if (state.isFileDragOver) refreshDropHintTimer();
-    try { dt.dropEffect = 'move'; } catch (err) { /* 某些平台只读 */ }
-  }, true);
-
-  window.addEventListener('dragenter', (e) => {
-    if (!e.dataTransfer) return;
-    e.preventDefault();
-    // 只要有任何拖拽进入窗口就先给出提示，便于用户确认拖拽事件已到达
-    if (state.isFileDragOver) return;
-    state.isFileDragOver = true;
-    setDropHintVisible(true);
-    dndDebug('dragenter', describeDragData(e.dataTransfer));
-  }, true);
-
-  window.addEventListener('dragleave', (e) => {
-    if (!state.isFileDragOver) return;
-    // 只有真正离开窗口时才复位（避免子元素间移动误触发）
-    if (e.relatedTarget === null || !document.documentElement.contains(e.relatedTarget)) {
-      resetFileDragOver();
-      dndDebug('dragleave');
-    }
-  }, true);
-
-  window.addEventListener('drop', async (e) => {
-    // 第一件事就是阻止默认行为，避免窗口直接跳转到被拖入的文件
-    e.preventDefault();
-    e.stopPropagation();
-
-    const dt = e.dataTransfer;
-    if (!dt) return;
-
-    const files = Array.from(dt.files || []);
-    resetFileDragOver();
-    dndDebug('drop', `${describeDragData(dt)} files=${files.length}`);
-
-    const paths = getDroppedPaths(files, dt);
-    console.log('📥 拖入文件:', paths.length ? paths.join(' | ') : '(未获取到路径)');
-    dndDebug('paths', paths.length ? paths.join(' | ') : '(未获取到路径)');
-
-    if (paths.length === 0) {
-      showBubble('⚠️ 无法读取拖入的文件路径，请重试或反馈日志', 3000);
-      return;
-    }
-
-    // 1. 播放拖入文件动画（暂留空，未配置素材时不播放）
-    playFileDropAnimation();
-
-    // 2. 移到回收站
-    await trashDroppedItems(paths);
-  }, true);
-}
-
-/** 描述拖拽数据，便于排查拖拽无响应的问题 */
-function describeDragData(dt) {
+/**
+ * 拉取插件贡献的桌宠右键菜单项
+ * 插件系统不可用 / 没有插件时保持原菜单不变
+ */
+async function loadPluginMenuItems() {
+  if (typeof window.petAPI.getPluginMenuItems !== 'function') return;
   try {
-    const types = dt && dt.types ? Array.from(dt.types).join(',') : '';
-    const itemKinds = dt && dt.items
-      ? Array.from(dt.items).map((it) => `${it.kind}/${it.type}`).join(',')
-      : '';
-    return `types=[${types}] items=[${itemKinds}]`;
+    const items = await window.petAPI.getPluginMenuItems();
+    renderPluginMenuItems(Array.isArray(items) ? items : []);
   } catch (e) {
-    return 'types=?';
+    console.warn('插件菜单加载失败（不影响本体功能）:', e.message);
   }
-}
-
-/** 把拖拽诊断信息送到主进程打印（不打开 DevTools 也能看到） */
-function dndDebug(stage, detail) {
-  try {
-    if (window.petAPI && window.petAPI.dndDebug) window.petAPI.dndDebug(stage, detail);
-  } catch (e) { /* 忽略 */ }
 }
 
 /**
- * 从拖拽数据中取出本地路径
- * 依次尝试：File.path（Electron < 32）→ webUtils.getPathForFile（Electron ≥ 29）
- * → dataTransfer 的 text/uri-list / text/plain 中的 file:// 路径
+ * 渲染插件菜单项
+ * @param {Array<{pluginId: string, command: string, label: string, icon?: string}>} items
  */
-function getDroppedPaths(files, dataTransfer) {
-  const paths = [];
-  const push = (p) => { if (p && !paths.includes(p)) paths.push(p); };
+function renderPluginMenuItems(items) {
+  state.pluginMenuItems = items;
+  const host = elements.pluginMenuHost;
+  if (!host) return;
 
-  for (const file of files) {
-    let filePath = '';
-    try { filePath = file.path || ''; } catch (e) { filePath = ''; }
-    if (!filePath && window.petAPI.getPathForFile) {
-      try { filePath = window.petAPI.getPathForFile(file) || ''; } catch (e) { filePath = ''; }
-    }
-    push(filePath);
+  if (items.length === 0) {
+    host.innerHTML = '';
+    host.classList.add('hidden');
+    return;
   }
 
-  if (paths.length === 0 && dataTransfer) {
-    for (const type of ['text/uri-list', 'text/plain']) {
-      let raw = '';
-      try { raw = dataTransfer.getData(type) || ''; } catch (e) { raw = ''; }
-      if (!raw) continue;
-      for (const line of raw.split(/\r?\n/)) {
-        const candidate = line.trim();
-        if (!candidate || candidate.startsWith('#')) continue;
-        const fromUri = fileUriToPath(candidate);
-        if (fromUri) push(fromUri);
-      }
-      if (paths.length > 0) break;
-    }
-  }
-
-  return paths;
+  host.innerHTML = items.map((item) => {
+    const icon = escapeHtml(item.icon || '🧩');
+    const label = escapeHtml(item.label || item.command || '插件功能');
+    return `<div class="menu-item" data-plugin-id="${escapeAttr(item.pluginId)}" data-command="${escapeAttr(item.command)}">` +
+      `<span class="menu-icon">${icon}</span><span>${label}</span></div>`;
+  }).join('');
+  host.classList.remove('hidden');
 }
 
-/** 把 file:// URL 转成系统路径 */
-function fileUriToPath(uri) {
-  if (!/^file:\/\//i.test(uri)) return '';
+/** 触发插件命令（例如打开插件窗口） */
+async function runPluginCommand(pluginId, command) {
+  if (typeof window.petAPI.runPluginCommand !== 'function') return;
   try {
-    const url = new URL(uri);
-    return decodeURIComponent(url.pathname);
+    const result = await window.petAPI.runPluginCommand(pluginId, command, { source: 'pet-menu' });
+    if (result && result.success === false) {
+      showBubble(`⚠️ 插件执行失败：${result.error || '未知错误'}`, 3000);
+    }
   } catch (e) {
-    return '';
+    showBubble(`⚠️ 插件执行失败：${e.message}`, 3000);
   }
 }
 
-/** 调用主进程把拖入的项目移到回收站 */
-async function trashDroppedItems(paths) {
-  let result;
-  try {
-    result = await window.petAPI.trashItems(paths);
-  } catch (e) {
-    showBubble(`⚠️ 移到回收站失败：${e.message}`, 4000);
-    return;
-  }
-
-  if (!result) {
-    showBubble('⚠️ 移到回收站失败', 3000);
-    return;
-  }
-  if (result.canceled) {
-    showBubble('已取消 🐾', 1500);
-    return;
-  }
-  if (result.success) {
-    showBubble(`🗑️ 已将 ${result.trashed.length} 个项目移到回收站`, 3000);
-    return;
-  }
-  const reason = (result.errors && result.errors[0]) || '未知错误';
-  const done = (result.trashed && result.trashed.length) || 0;
-  showBubble(done > 0
-    ? `🗑️ 已移入回收站 ${done} 个，${result.errors.length} 个失败`
-    : `⚠️ 移入回收站失败：${reason}`, 4000);
-}
-
-/** 显示/隐藏拖入提示 */
-function setDropHintVisible(visible) {
-  const hint = elements.dropHint;
-  if (!hint) return;
-  if (state.dropHintTimer) { clearTimeout(state.dropHintTimer); state.dropHintTimer = null; }
-  hint.classList.toggle('hidden', !visible);
-  elements.container.classList.toggle('file-drop-active', visible);
-  if (visible) refreshDropHintTimer();
-}
-
-/** 续期拖入提示的自动复位计时器 */
-function refreshDropHintTimer() {
-  if (state.dropHintTimer) clearTimeout(state.dropHintTimer);
-  state.dropHintTimer = setTimeout(() => resetFileDragOver(), 4000);
-}
-
-function resetFileDragOver() {
-  state.isFileDragOver = false;
-  if (state.dropHintTimer) { clearTimeout(state.dropHintTimer); state.dropHintTimer = null; }
-  if (elements.dropHint) elements.dropHint.classList.add('hidden');
-  elements.container.classList.remove('file-drop-active');
+// ====== 拖拽安全兜底 ======
+// 文件拖入功能已移除；这里只阻止窗口被浏览器默认行为导航到被拖入的文件，
+// 不做任何文件操作，保证桌宠窗口始终停留在 pet.html。
+function setupDropSafetyGuard() {
+  const block = (e) => { e.preventDefault(); };
+  window.addEventListener('dragover', block, true);
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showBubble('🐾 我暂时不接收文件哦', 2000);
+  }, true);
 }
 
 // ====== 动画控制 ======
@@ -872,8 +725,25 @@ function formatBalancePlain(data) {
 }
 
 function showRandomBubble() {
-  const msgs = ['你好呀！👋', '戳我干嘛~', '嘿嘿 😊', '有什么需要帮忙的吗？', '拖文件给我可以帮你丢进回收站哦', '🐾 嗷呜~', '我在呢！', '❤️', '✨', '💭', '偷偷告诉你，点击我可以看 API 余额', '🤗', '喵~', '汪汪！', '你好！我是 DeskLLMPet', '🌟'];
+  const msgs = ['你好呀！👋', '戳我干嘛~', '嘿嘿 😊', '有什么需要帮忙的吗？', '🐾 嗷呜~', '我在呢！', '❤️', '✨', '💭', '偷偷告诉你，点击我可以看 API 余额', '🤗', '喵~', '汪汪！', '你好！我是 DeskLLMPet', '🌟'];
   showBubble(msgs[Math.floor(Math.random() * msgs.length)], 2000);
+}
+
+// ====== 工具函数 ======
+
+/** HTML 转义 */
+function escapeHtml(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** HTML 属性转义（用于 data-* 属性） */
+function escapeAttr(text) {
+  return escapeHtml(text);
 }
 
 // ====== 启动 ======

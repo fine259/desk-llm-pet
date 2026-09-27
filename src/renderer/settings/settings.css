@@ -219,6 +219,28 @@ body.platform-mac #title-btns {
   box-shadow: 0 0 0 3px var(--accent-light);
 }
 
+/* 插件设置面板复用的多行文本 / 下拉框 */
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition);
+  resize: vertical;
+}
+
+.form-group textarea:focus,
+.form-group select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
 .form-hint {
   display: block;
   font-size: 11px;

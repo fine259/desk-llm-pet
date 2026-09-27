@@ -14,9 +14,7 @@ const defaults = {
   animations: {
     idlePool: [],
     clickPool: [],
-    currentIdleIndex: 0,
-    // 拖入文件的专属动画文件名（暂留空，留待后续素材补充）
-    fileDropAnim: ''
+    currentIdleIndex: 0
   },
   balance: {
     enabled: true,
@@ -27,7 +25,6 @@ const defaults = {
     scale: 1.0,
     autoStart: false,
     theme: 'dark',
-    confirmTrash: true,
     // 窗口裁剪：窗口 = 300 * scale * crop，动画本身保持原大小，只裁掉周围背景
     crop: 0.55,
     cropOffsetX: 0,

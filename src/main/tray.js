@@ -3,6 +3,7 @@
  * - 单击：直接显示/隐藏桌宠
  * - 右键/Ctrl+单击：弹出菜单
  * - 双击：显示桌宠
+ * - 插件可通过 contributes.trayMenu 往菜单里加条目
  */
 
 const { Tray, Menu, app, nativeImage } = require('electron');
@@ -10,14 +11,47 @@ const path = require('path');
 const { togglePetWindow, getPetWindow } = require('./pet-window');
 const { createSettingsWindow } = require('./settings-window');
 
+// 插件宿主按需加载：插件系统不可用时托盘菜单保持原样
+let pluginManager = null;
+try {
+  pluginManager = require('../plugins/plugin-manager');
+} catch (e) {
+  pluginManager = null;
+}
+
 let tray = null;
 const isMac = process.platform === 'darwin';
+
+/** 安全获取插件贡献的托盘菜单项（插件系统不可用时返回空数组） */
+function pluginTrayItems() {
+  try {
+    if (!pluginManager || typeof pluginManager.getPluginHost !== 'function') return [];
+    const host = pluginManager.getPluginHost();
+    return host ? host.getTrayMenuItems() : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+/** 触发插件命令，失败只打日志，不影响托盘本身 */
+function runPluginCommand(pluginId, command) {
+  if (!pluginManager || typeof pluginManager.getPluginHost !== 'function') return;
+  const host = pluginManager.getPluginHost();
+  if (!host) return;
+  Promise.resolve(host.runCommand(pluginId, command, { source: 'tray-menu' }))
+    .then((result) => {
+      if (result && result.success === false) {
+        console.warn('⚠️ 插件命令执行失败:', result.error);
+      }
+    })
+    .catch((e) => console.warn('⚠️ 插件命令异常:', e.message));
+}
 
 /**
  * 构建菜单（用于右键弹出）
  */
 function buildMenu() {
-  return Menu.buildFromTemplate([
+  const template = [
     {
       label: '显示/隐藏桌宠',
       click: () => togglePetWindow()
@@ -30,7 +64,22 @@ function buildMenu() {
         if (!petWin.isVisible()) petWin.show();
         petWin.webContents.send('show-balance');
       }
-    },
+    }
+  ];
+
+  // 插件贡献的菜单项
+  const items = pluginTrayItems();
+  if (items.length > 0) {
+    template.push({ type: 'separator' });
+    for (const item of items) {
+      template.push({
+        label: `${item.icon} ${item.label}`,
+        click: () => runPluginCommand(item.pluginId, item.command)
+      });
+    }
+  }
+
+  template.push(
     { type: 'separator' },
     {
       label: '设置',
@@ -45,7 +94,7 @@ function buildMenu() {
           type: 'info',
           title: '关于 DeskLLMPet',
           message: 'DeskLLMPet v1.0.0',
-          detail: '一款支持 API 余额气泡、文件拖拽回收的交互式桌面宠物应用。\n\n基于 Electron 构建，支持 Windows 和 macOS。\n\n🔗 GitHub: https://github.com/isKage/desk-llm-pet',
+          detail: '一款支持 API 余额气泡、可插件化扩展的桌面宠物应用。\n\n基于 Electron 构建，支持 Windows 和 macOS。\n\n🔗 GitHub: https://github.com/isKage/desk-llm-pet',
           buttons: ['确定', '访问 GitHub'],
           defaultId: 0,
           cancelId: 0
@@ -61,7 +110,9 @@ function buildMenu() {
       label: '退出',
       click: () => app.quit()
     }
-  ]);
+  );
+
+  return Menu.buildFromTemplate(template);
 }
 
 /**

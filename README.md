@@ -4,7 +4,7 @@
 
 # 🐾 DeskLLMPet 桌宠大肥鱼 doge~
 
-**会报 API 余额、能帮你把文件丢进回收站的桌面宠物**
+**会报 API 余额、可插件化扩展（内置 AI 对话）的桌面宠物**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/electron-28.3.3-9feaf9.svg)](https://www.electronjs.org/)
@@ -45,18 +45,26 @@
 - **官方接口**：调用 `https://api.deepseek.com/user/balance`，余额接口地址可自定义
 - **失败提示**：未配置 Key、网络异常时给出明确的错误气泡
 
-### 🗑️ 拖文件给桌宠
-- **拖拽回收**：把文件/文件夹拖到桌宠身上，松开即移入系统回收站（可从回收站恢复）
-- **拖入反馈**：拖到桌宠上会高亮并提示「松开移到回收站」
-- **专属动画**：预留「拖入文件」动画位，素材就绪后自动生效（暂留空）
-- **安全确认**：默认弹窗确认（挂在桌宠窗口上，不会被置顶桌宠挡住），可在设置中关闭
+### 🧩 插件化扩展
+- **完全解耦**：所有可选功能都放在 `src/plugins/<id>/`，插件加载失败只会被跳过，**本体照常运行**
+- **预留扩展点**：桌宠右键菜单、系统托盘菜单、设置页表单、命名空间化 IPC、插件独立存储与窗口
+- **内置 AI 对话插件**：多会话管理、流式回复、历史本地保存（详见下文）
+- **开发文档**：见 [`src/plugins/README.md`](src/plugins/README.md)
+
+### 💬 AI 对话（内置插件）
+- **独立窗口**：从桌宠右键菜单或托盘菜单打开，与本体窗口、配置互不干扰
+- **多会话管理**：新建 / 切换 / 重命名 / 删除，标题按首条消息自动生成
+- **流式回复**：逐字输出，可随时「停止生成」；也可切换为一次性返回
+- **本地保存**：对话历史保存在 `plugins/llm-chat/data.json`，不上传
+- **配置独立**：插件自带 API Key / 模型 / 温度 / 提示词配置；留空则回退使用本体的 API 配置
 
 ### ⚙️ 可视化配置
 - **API 配置**：配置 API Key、API 地址、余额查询地址
 - **动画素材管理**：可视化选择闲置/点击动画池
 - **外观设置**：调节宠物透明度、宠物大小、窗口裁剪比例与画面偏移
 - **气泡设置**：气泡大小、水平/垂直偏移、预览
-- **行为设置**：余额气泡开关与间隔、移入回收站前确认
+- **AI 对话**：插件自带的配置面板（Key、模型、temperature、max_tokens、流式开关、系统提示词）
+- **行为设置**：余额气泡开关与间隔
 
 ---
 
@@ -134,6 +142,20 @@ npm run build:all   # 同时打包两个平台
 - 托盘菜单「立即查看 API 余额」也可手动触发。
 
 > 🔒 API 密钥仅保存在本地，不会上传到任何服务器。
+
+### 💬 AI 对话的配置
+
+AI 对话是**插件**，有自己独立的配置页（**设置 → AI 对话**）：
+
+| 配置项 | 说明 |
+|--------|------|
+| API Key / API 地址 | 留空则自动回退使用上面「API 配置」里的值（因此通常不用重复填写） |
+| 模型 | 默认 `deepseek-chat`，也可填 `deepseek-reasoner` |
+| temperature / max_tokens | 回复的随机性与长度上限 |
+| 流式输出 | 开启后逐字显示，可随时「停止生成」 |
+| 系统提示词 | 定义 AI 的身份与回答风格 |
+
+面板上的 **🔗 测试连接** 可以直接验证配置是否可用。
 
 ---
 
@@ -215,8 +237,8 @@ C:\Users\<用户名>\AppData\Roaming\deskllmpet
 
 | 目录/文件 | 内容 | 删除后影响 |
 |-----------|------|-----------|
-| `~/Library/Application Support/deskllmpet/` (macOS) | 配置、API密钥 | 所有设置丢失 |
-| `%APPDATA%\deskllmpet` (Windows) | 配置、API密钥 | 所有设置丢失 |
+| `~/Library/Application Support/deskllmpet/` (macOS) | 配置、API密钥、插件数据（含对话历史） | 所有设置与对话记录丢失 |
+| `%APPDATA%\deskllmpet` (Windows) | 配置、API密钥、插件数据（含对话历史） | 所有设置与对话记录丢失 |
 | `~/Library/Logs/DeskLLMPet/` (macOS) | 应用日志 | 仅日志丢失，不影响功能 |
 | `/Applications/DeskLLMPet.app` (macOS) | 应用本体 | 应用不可用 |
 
@@ -234,17 +256,32 @@ DeskLLMPet/
 │   │   ├── main.js              # 入口，应用生命周期
 │   │   ├── pet-window.js        # 桌宠透明窗口
 │   │   ├── settings-window.js   # 设置窗口
-│   │   ├── tray.js              # 系统托盘
-│   │   └── ipc-handlers.js      # IPC 通信处理
+│   │   ├── tray.js              # 系统托盘（含插件菜单项）
+│   │   └── ipc-handlers.js      # 本体 IPC 通信处理
 │   ├── preload/                 # 预加载脚本（安全桥接）
-│   │   ├── pet-preload.js
-│   │   └── settings-preload.js
+│   │   ├── pet-preload.js       # 含插件菜单扩展点
+│   │   └── settings-preload.js  # 含插件设置扩展点
 │   ├── renderer/                # 渲染进程（UI 页面）
 │   │   ├── pet/                 # 桌宠页面
-│   │   └── settings/            # 设置页面
-│   └── shared/                  # 共享模块
-│       ├── store.js             # 持久化存储
-│       └── deepseek-api.js      # DeepSeek 余额查询客户端
+│   │   ├── bubble/              # 余额气泡窗口
+│   │   └── settings/            # 设置页面（含插件设置面板容器）
+│   ├── shared/                  # 共享模块
+│   │   ├── store.js             # 持久化存储
+│   │   └── deepseek-api.js      # DeepSeek 余额查询客户端
+│   └── plugins/                 # 🧩 插件目录（与本体解耦）
+│       ├── plugin-manager.js    # 插件宿主（发现/校验/激活/菜单/设置/IPC 命名空间）
+│       ├── README.md            # 插件开发指南
+│       └── llm-chat/            # 内置插件：AI 对话
+│           ├── plugin.json      # 插件清单（菜单 / 设置 / 入口）
+│           ├── main.js          # 主进程逻辑
+│           ├── chat-client.js   # OpenAI 兼容流式客户端
+│           ├── conversations.js  # 对话历史
+│           ├── chat-window.js   # 对话窗口
+│           ├── preload.js       # 渲染进程桥（plugin:llm-chat:*）
+│           └── renderer/        # 对话页面
+├── scripts/
+│   ├── self-check.js            # 静态自检：npm run check
+│   └── smoke-renderer.js        # 渲染进程冒烟测试：npm run check:renderer
 ├── assets/
 │   ├── animations/              # 动画素材
 │   │   ├── idle/                # 闲置动画
@@ -295,26 +332,29 @@ npm run dev:tools  # 需要调试时：运行应用并打开 DevTools
 🚀 DeskLLMPet 启动 v1.0.0 | 代码目录: /path/to/DeskLLMPet | 参数: . --dev
 ```
 
-### 排查：拖文件到桌宠没反应
+### 🧩 插件开发
 
-应用会把拖拽事件和回收站结果打印到终端（`npm run dev` 的窗口），形如：
+所有可选功能都在 `src/plugins/<id>/` 下，插件与本体完全解耦：
 
+- 插件加载失败只会被跳过（终端打印 `⚠️ 插件加载失败 [id]: 原因`），**本体照常运行**；
+- 新增功能 = 新增一个插件目录 + 在 `plugin.json` 里声明菜单/设置，**不需要改本体代码**；
+- 完整接口说明：**[`src/plugins/README.md`](src/plugins/README.md)**。
+
+### ✅ 自检
+
+```bash
+npm run check           # 静态自检：语法 + 插件宿主 + 扩展点 + 独立性与回归（秒级，无需 GUI）
+npm run check:renderer  # 真实 Electron 冒烟测试：桌宠/设置/对话三个页面 + IPC 往返链路
 ```
-[DnD] dragenter → types=[Files] items=[file/text/plain]
-[DnD] drop → types=[Files] items=[] files=1
-[DnD] paths → /Users/xxx/Desktop/a.txt
-[DnD] trash-items 收到: /Users/xxx/Desktop/a.txt
-[DnD] 移入回收站结果: 成功 1
-```
 
-- 连 `[DnD] dragenter` 都没有：系统没有把拖拽事件投递给窗口，请带上系统版本反馈；
-- 有 `dragenter` 没有 `paths`：说明拿不到文件路径（会同时弹气泡提示）；
-- 有 `paths` 但结果是失败：通常是 macOS 没有授权该应用访问文件夹（系统设置 → 隐私与安全性 → 文件与文件夹 / 完全磁盘访问权限）。
+> 受限环境（容器 / 无 GUI 沙箱）下跑冒烟测试可加 `--no-sandbox`：
+> `npx electron scripts/smoke-renderer.js --no-sandbox`
 
 ### 安全原则
 
 - 使用 `contextIsolation: true` 隔离渲染进程
 - 通过 `contextBridge` 暴露安全 API
+- 插件 IPC 通道统一命名空间化（`plugin:<插件id>:<通道>`），插件窗口禁止导航到插件目录之外
 - API 密钥仅存储在本地，不上传
 
 ---

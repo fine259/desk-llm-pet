@@ -1,9 +1,11 @@
 /**
  * Electron 主进程入口
  * 管理应用生命周期、窗口创建和 IPC 通信
+ * 插件（src/plugins）通过插件宿主按需加载，加载失败不影响本体
  */
 
-const { app, BrowserWindow, ipcMain, nativeTheme, nativeImage } = require('electron');
+const electron = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, nativeImage } = electron;
 const path = require('path');
 const {
   createPetWindow, getPetWindow, setPetGeometryListener
@@ -12,6 +14,15 @@ const { createSettingsWindow, getSettingsWindow } = require('./settings-window')
 const { createBubbleWindow, positionBubble, hideBubble } = require('./bubble-window');
 const { createTray } = require('./tray');
 const { registerIpcHandlers } = require('./ipc-handlers');
+const { getLLMConfig } = require('../shared/store');
+
+// 插件宿主按需加载：即使 src/plugins 缺失或损坏，本体也能照常启动
+let pluginManager = null;
+try {
+  pluginManager = require('../plugins/plugin-manager');
+} catch (e) {
+  console.warn('⚠️ 插件系统加载失败（本体功能不受影响）:', e.message);
+}
 
 // 开发模式标记
 const isDev = process.argv.includes('--dev');
@@ -59,6 +70,10 @@ async function initApp() {
   // 注册所有 IPC 处理器
   registerIpcHandlers();
 
+  // 加载插件（贡献桌宠/托盘菜单、设置页、独立 IPC 与窗口）
+  // 任何插件出错都只跳过该插件，不影响本体
+  await loadPlugins();
+
   // 创建桌宠窗口
   await createPetWindow(isDev);
 
@@ -105,6 +120,33 @@ async function initApp() {
 // 应用就绪
 app.whenReady().then(initApp);
 
+/**
+ * 加载插件系统
+ * 插件宿主只拿到「显式注入」的能力：Electron 对象 + 两个只读宿主服务，
+ * 因此插件无法反向修改本体的内部状态，本体也不依赖任何具体插件
+ */
+async function loadPlugins() {
+  if (!pluginManager) return;
+  try {
+    const host = pluginManager.initPluginHost({
+      electron,
+      logger: console,
+      hostServices: {
+        // 只读共享配置：插件缺省时可回退使用本体的 API 配置
+        getSharedLLMConfig: () => getLLMConfig(),
+        // 打开本体的设置窗口
+        openSettings: () => { createSettingsWindow(); return true; }
+      }
+    });
+    const reports = await host.loadAll();
+    const active = reports.filter((r) => r.status === 'active').length;
+    const failed = reports.filter((r) => r.status === 'error').length;
+    console.log(`🧩 插件系统就绪：${active} 个已加载${failed ? `，${failed} 个失败` : ''}`);
+  } catch (e) {
+    console.error('⚠️ 插件系统初始化失败（本体功能不受影响）:', e.message);
+  }
+}
+
 // 所有窗口关闭时（macOS 不退出）
 app.on('window-all-closed', () => {
   // macOS 下保持应用在 Dock 中运行
@@ -125,5 +167,12 @@ app.on('activate', () => {
 
 // 应用退出前清理
 app.on('before-quit', () => {
-  // 保存状态等清理工作
+  const host = pluginManager && typeof pluginManager.getPluginHost === 'function'
+    ? pluginManager.getPluginHost()
+    : null;
+  if (!host) return;
+  // 卸载插件：注销其 IPC 通道、关闭其窗口
+  Promise.resolve()
+    .then(() => host.deactivateAll())
+    .catch(() => { /* 退出流程中不阻塞 */ });
 });

@@ -5,10 +5,6 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-// webUtils 在新版 Electron 中用于获取拖拽文件的真实路径（旧版本回退到 file.path）
-let webUtils = null;
-try { ({ webUtils } = require('electron')); } catch (e) { webUtils = null; }
-
 contextBridge.exposeInMainWorld('petAPI', {
   // 获取配置
   getAnimationConfig: () => ipcRenderer.invoke('get-animation-config'),
@@ -29,18 +25,15 @@ contextBridge.exposeInMainWorld('petAPI', {
   hidePet: () => ipcRenderer.invoke('hide-pet'),
   quitApp: () => ipcRenderer.invoke('quit-app'),
 
-  // 文件拖拽 → 回收站
-  trashItems: (paths) => ipcRenderer.invoke('trash-items', paths),
-  // 拖拽诊断日志（打印到主进程终端，便于排查拖拽无响应）
-  dndDebug: (stage, detail) => ipcRenderer.send('dnd-debug', { stage, detail }),
-  // 获取拖拽文件的本地路径（Electron 29+ 用 webUtils，旧版直接用 file.path）
-  getPathForFile: (file) => {
-    try {
-      if (webUtils && typeof webUtils.getPathForFile === 'function') {
-        return webUtils.getPathForFile(file) || '';
-      }
-    } catch (e) { /* 回退到 file.path */ }
-    try { return file && file.path ? file.path : ''; } catch (e) { return ''; }
+  // ====== 插件扩展点 ======
+  // 插件贡献的桌宠右键菜单项（插件系统不可用时返回空数组）
+  getPluginMenuItems: () => ipcRenderer.invoke('plugins:get-pet-menu'),
+  // 触发插件命令（例如打开插件的窗口）
+  runPluginCommand: (pluginId, command, payload) =>
+    ipcRenderer.invoke('plugins:run-command', pluginId, command, payload),
+  // 插件加载完成 / 变化时重新拉取菜单
+  onPluginsChanged: (callback) => {
+    ipcRenderer.on('plugins:changed', () => callback());
   },
 
   // 监听：动画配置变更（设置页面保存后实时生效）
@@ -66,6 +59,5 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 监听：主题变化
   onThemeChanged: (callback) => {
     ipcRenderer.on('theme-changed', (event, theme) => callback(theme));
-  },
-  // 监听：窗口尺寸/裁剪变化（气泡由主进程负责，这里仅保留主题与配置监听）
+  }
 });

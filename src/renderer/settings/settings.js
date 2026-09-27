@@ -1,6 +1,7 @@
 /**
  * 设置窗口逻辑
  * 处理 API 余额配置、动画选择、宠物设置等的可视化配置
+ * 插件设置面板（contributes.settings）由插件系统动态追加
  */
 
 // ====== 状态管理 ======
@@ -38,6 +39,9 @@ async function init() {
     if (el && paths && paths.projectRoot) el.textContent = paths.projectRoot;
   } catch (e) { /* 忽略 */ }
 
+  // 插件设置面板（没有插件时什么都不做）
+  await renderPluginSections();
+
   console.log('⚙️ 设置窗口已就绪');
 }
 
@@ -46,8 +50,6 @@ async function init() {
  */
 function cacheElements() {
   elements.btnClose = document.getElementById('btn-close');
-  elements.tabBtns = document.querySelectorAll('.tab-btn');
-  elements.tabPanels = document.querySelectorAll('.tab-panel');
 
   // API 配置
   elements.apiEndpoint = document.getElementById('api-endpoint');
@@ -71,7 +73,6 @@ function cacheElements() {
   elements.petScale = document.getElementById('pet-scale');
   elements.scaleValue = document.getElementById('scale-value');
   elements.petAutoStart = document.getElementById('pet-auto-start');
-  elements.petConfirmTrash = document.getElementById('pet-confirm-trash');
   elements.btnSavePet = document.getElementById('btn-save-pet');
 
   // 窗口裁剪
@@ -119,20 +120,25 @@ async function loadAllConfig() {
 
 /**
  * 设置标签导航
+ * 用事件委托实现：插件可以在初始化后动态追加标签页，无需重新绑定
  */
 function setupTabNavigation() {
-  elements.tabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tabName = btn.dataset.tab;
+  const nav = document.getElementById('tab-nav');
+  if (!nav) return;
+  nav.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab-btn');
+    if (!btn || !btn.dataset.tab) return;
+    switchTab(btn.dataset.tab);
+  });
+}
 
-      // 切换按钮状态
-      elements.tabBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      // 切换面板
-      elements.tabPanels.forEach(p => p.classList.remove('active'));
-      document.getElementById(`tab-${tabName}`).classList.add('active');
-    });
+/** 切换到指定标签页（tabName 与面板 id 的 tab- 前缀对应） */
+function switchTab(tabName) {
+  document.querySelectorAll('#tab-nav .tab-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+  document.querySelectorAll('#tab-content .tab-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `tab-${tabName}`);
   });
 }
 
@@ -260,7 +266,6 @@ function populateForms() {
   elements.petScale.value = pet.scale || 1;
   elements.scaleValue.textContent = (pet.scale || 1).toFixed(1) + 'x';
   elements.petAutoStart.checked = pet.autoStart === true;
-  elements.petConfirmTrash.checked = pet.confirmTrash !== false;
 
   // 窗口裁剪
   const crop = Number.isFinite(Number(pet.crop)) ? Number(pet.crop) : 0.55;
@@ -311,11 +316,11 @@ function renderAnimationList(type) {
     return `
       <div class="anim-item">
         <input type="checkbox"
-               value="${escapeHtml(anim.name)}"
-               data-type="${type}"
+               value="${escapeAttr(anim.name)}"
+               data-type="${escapeAttr(type)}"
                ${isChecked ? 'checked' : ''}>
         <span class="anim-item-name">🎬 ${escapeHtml(anim.name)}</span>
-        <button class="anim-item-preview" data-path="${escapeHtml(anim.path)}">预览</button>
+        <button class="anim-item-preview" data-path="${escapeAttr(anim.path)}">预览</button>
       </div>
     `;
   }).join('');
@@ -500,7 +505,6 @@ async function savePetConfig() {
     opacity: parseFloat(elements.petOpacity.value),
     scale: parseFloat(elements.petScale.value),
     autoStart: elements.petAutoStart.checked,
-    confirmTrash: elements.petConfirmTrash.checked,
     ...readCropConfig()
   };
 
@@ -563,8 +567,224 @@ function showToast(message) {
  */
 function escapeHtml(text) {
   const div = document.createElement('div');
-  div.textContent = text;
+  div.textContent = text == null ? '' : String(text);
   return div.innerHTML;
+}
+
+/** HTML 属性转义（转义引号，避免拼进属性时逃逸） */
+function escapeAttr(text) {
+  return escapeHtml(text)
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ============================================================================
+// 插件设置面板（contributes.settings）
+// 插件通过在 plugin.json 里声明字段，由这里渲染成通用表单；
+// 没有任何插件时，以下逻辑完全不执行，设置页与原来完全一致
+// ============================================================================
+
+const PLUGIN_FIELD_TYPES = ['text', 'password', 'number', 'boolean', 'textarea', 'select'];
+
+/** 字段 id：只包含安全字符，可直接用于 getElementById */
+function pluginFieldId(pluginId, key) {
+  return `plugin-${pluginId}-${key}`;
+}
+
+/** 拉取所有插件的设置面板并插入到标签栏 */
+async function renderPluginSections() {
+  if (typeof window.settingsAPI.getPluginSettingsSections !== 'function') return;
+
+  let sections = [];
+  try {
+    sections = await window.settingsAPI.getPluginSettingsSections();
+  } catch (e) {
+    console.warn('插件设置加载失败（不影响本体）:', e.message);
+    return;
+  }
+  if (!Array.isArray(sections) || sections.length === 0) return;
+
+  const nav = document.getElementById('tab-nav');
+  const content = document.getElementById('tab-content');
+  if (!nav || !content) return;
+
+  for (const section of sections) {
+    if (!section || !section.pluginId) continue;
+    const tabName = `plugin-${section.pluginId}`;
+
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn';
+    btn.dataset.tab = tabName;
+    btn.textContent = `${section.icon || '🧩'} ${section.title || section.pluginId}`;
+    nav.appendChild(btn);
+
+    const panel = document.createElement('section');
+    panel.className = 'tab-panel';
+    panel.id = `tab-${tabName}`;
+    panel.innerHTML = buildPluginPanelHtml(section);
+    content.appendChild(panel);
+
+    try {
+      await bindPluginPanel(section, panel);
+    } catch (e) {
+      console.warn(`插件设置面板初始化失败 [${section.pluginId}]:`, e.message);
+    }
+  }
+
+  console.log(`🧩 已加载 ${sections.length} 个插件设置面板`);
+}
+
+/** 生成插件设置面板的 HTML */
+function buildPluginPanelHtml(section) {
+  const fields = (Array.isArray(section.fields) ? section.fields : [])
+    .filter((field) => field && typeof field.key === 'string' && PLUGIN_FIELD_TYPES.includes(field.type))
+    .map((field) => {
+      const id = pluginFieldId(section.pluginId, field.key);
+      const attrs = `id="${escapeAttr(id)}" data-field-key="${escapeAttr(field.key)}" data-field-type="${escapeAttr(field.type)}"`;
+      const hint = field.hint ? `<span class="form-hint">${escapeHtml(field.hint)}</span>` : '';
+      const placeholder = field.placeholder ? ` placeholder="${escapeAttr(field.placeholder)}"` : '';
+
+      if (field.type === 'boolean') {
+        return `<div class="form-group">
+          <label class="switch-label">
+            <span>${escapeHtml(field.label)}</span>
+            <label class="switch">
+              <input type="checkbox" ${attrs}>
+              <span class="switch-slider"></span>
+            </label>
+          </label>
+          ${hint}
+        </div>`;
+      }
+
+      let control;
+      switch (field.type) {
+        case 'textarea':
+          control = `<textarea ${attrs} rows="${Number.isFinite(Number(field.rows)) ? Number(field.rows) : 3}"${placeholder}></textarea>`;
+          break;
+        case 'select': {
+          const options = (Array.isArray(field.options) ? field.options : [])
+            .map((opt) => `<option value="${escapeAttr(opt.value)}">${escapeHtml(opt.label)}</option>`)
+            .join('');
+          control = `<select ${attrs}>${options}</select>`;
+          break;
+        }
+        case 'number': {
+          const min = Number.isFinite(Number(field.min)) ? ` min="${Number(field.min)}"` : '';
+          const max = Number.isFinite(Number(field.max)) ? ` max="${Number(field.max)}"` : '';
+          const step = Number.isFinite(Number(field.step)) ? ` step="${Number(field.step)}"` : '';
+          control = `<input type="number" ${attrs}${min}${max}${step}${placeholder}>`;
+          break;
+        }
+        case 'password':
+          control = `<input type="password" ${attrs}${placeholder}>`;
+          break;
+        default:
+          control = `<input type="text" ${attrs}${placeholder}>`;
+      }
+
+      return `<div class="form-group">
+        <label for="${escapeAttr(id)}">${escapeHtml(field.label)}</label>
+        ${control}
+        ${hint}
+      </div>`;
+    })
+    .join('');
+
+  const actions = (Array.isArray(section.actions) ? section.actions : [])
+    .map((action) => `<button class="btn ${action.style === 'primary' ? 'btn-primary' : 'btn-secondary'}" data-plugin-action="${escapeAttr(action.id)}">${escapeHtml(action.label)}</button>`)
+    .join('');
+
+  return `<div class="setting-group" data-plugin-id="${escapeAttr(section.pluginId)}">
+    <h3>${escapeHtml(section.title || section.pluginId)}</h3>
+    <p class="setting-desc">${escapeHtml(section.description || '')}</p>
+    ${fields}
+    <div class="form-actions">
+      <button class="btn btn-primary" data-plugin-save="1">💾 保存</button>
+      ${actions}
+    </div>
+    <div class="test-result hidden" data-plugin-result="1"></div>
+  </div>`;
+}
+
+/** 填充已保存的值并绑定按钮 */
+async function bindPluginPanel(section, panel) {
+  let values = {};
+  try {
+    values = (await window.settingsAPI.getPluginSettings(section.pluginId)) || {};
+  } catch (e) {
+    console.warn(`读取插件设置失败 [${section.pluginId}]:`, e.message);
+  }
+
+  for (const field of section.fields || []) {
+    const input = panel.querySelector(`[data-field-key="${field.key}"]`);
+    if (!input) continue;
+    if (field.type === 'boolean') {
+      input.checked = values[field.key] === true;
+    } else {
+      const value = values[field.key];
+      input.value = value === undefined || value === null ? '' : String(value);
+    }
+  }
+
+  panel.querySelector('[data-plugin-save]')?.addEventListener('click', () => savePluginSettings(section, panel));
+  panel.querySelectorAll('[data-plugin-action]').forEach((btn) => {
+    btn.addEventListener('click', () => runPluginAction(section, panel, btn.dataset.pluginAction));
+  });
+}
+
+/** 读取面板上的表单值 */
+function collectPluginValues(section, panel) {
+  const values = {};
+  for (const field of section.fields || []) {
+    const input = panel.querySelector(`[data-field-key="${field.key}"]`);
+    if (!input) continue;
+    if (field.type === 'boolean') {
+      values[field.key] = input.checked;
+    } else if (field.type === 'number') {
+      const num = Number(input.value);
+      if (Number.isFinite(num)) values[field.key] = num;
+    } else {
+      values[field.key] = input.value;
+    }
+  }
+  return values;
+}
+
+async function savePluginSettings(section, panel) {
+  try {
+    const result = await window.settingsAPI.setPluginSettings(section.pluginId, collectPluginValues(section, panel));
+    if (result && result.success) {
+      showToast('✅ 插件设置已保存');
+      showPluginResult(panel, true, '✅ 已保存');
+    } else {
+      showPluginResult(panel, false, `❌ 保存失败：${(result && result.error) || '未知错误'}`);
+    }
+  } catch (e) {
+    showPluginResult(panel, false, `❌ 保存失败：${e.message}`);
+  }
+}
+
+async function runPluginAction(section, panel, actionId) {
+  showPluginResult(panel, true, '⏳ 执行中...');
+  try {
+    const result = await window.settingsAPI.runPluginSettingsAction(
+      section.pluginId,
+      actionId,
+      collectPluginValues(section, panel)
+    );
+    const ok = !!(result && result.success);
+    showPluginResult(panel, ok, (result && (result.message || result.error)) || (ok ? '✅ 完成' : '❌ 执行失败'));
+  } catch (e) {
+    showPluginResult(panel, false, `❌ 执行失败：${e.message}`);
+  }
+}
+
+function showPluginResult(panel, ok, text) {
+  const el = panel.querySelector('[data-plugin-result]');
+  if (!el) return;
+  el.className = `test-result ${ok ? 'success' : 'error'}`;
+  el.textContent = text;
 }
 
 // 添加 toast 动画样式
